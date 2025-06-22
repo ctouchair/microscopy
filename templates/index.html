@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microscope Control</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <div class="preview">
+            <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed"/>
+        </div>
+        <div class="controls">
+            <div class="button-row">
+                <button id="capture" class="btn" onclick="captureScreenshot()">📸 拍照</button>
+                <button id="recordBtn" class="btn" onclick="toggleRecording()">开始录制</button>
+            </div>
+            <div class="button-row">
+                <button id="fast_focus" class="btn" onclick="fast_forcus()">快速对焦</button>
+                <button id="save_config" class="btn" onclick="save_config()">保存设置</button>
+            </div>
+            <div id="indicator" class="indicator"></div> <!-- 指示灯 -->
+            <!-- X方向 -->
+            <span id="x_value" class="slider-value">X位置：0 mm</span>
+            <input type="range" id="x_pos" min="-7" max="7" step="0.01" value="0">
+
+            <!-- Y方向 -->
+            <span id="y_value" class="slider-value">Y位置：0 mm</span>
+            <input type="range" id="y_pos" min="-7" max="7" step="0.01" value="0">
+
+            <!-- Z方向 -->
+            <span id="z_value" class="slider-value">Z位置：0 mm</span>
+            <input type="range" id="z_pos" min="-5" max="5" step="0.001" value="0">
+
+            <!-- 曝光时间 -->
+            <span id="exposure_value" class="slider-value">曝光时间：10 ms</span>
+            <input type="range" id="exposure" min="1" max="500" step="1">
+
+            <!-- ISO增益 -->
+            <span id="gain_value" class="slider-value">ISO增益：1</span>
+            <input type="range" id="gain" min="1" max="10" step="0.1">
+
+            <!-- LED亮度 -->
+            <span id="led_value" class="slider-value">LED亮度：0</span>
+            <input type="range" id="led" min="0" max="1" step="0.01">
+
+            <!-- 白平衡增益 R -->
+            <span id="r_value" class="slider-value">白平衡红色增益：0.674</span>
+            <input type="range" id="r_bal" min="0.5" max="1.5" step="0.01">
+
+            <!-- 白平衡增益 B -->
+            <span id="b_value" class="slider-value">白平衡蓝色增益：0.576</span>
+            <input type="range" id="b_bal" min="0.5" max="1.5" step="0.01">
+
+        </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>

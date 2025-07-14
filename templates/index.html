@@ -5,11 +5,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Microscope Control</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
     <div class="container">
-        <div class="preview">
-            <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed"/>
+        <div class="left-panel">
+            <div class="preview">
+                <canvas id="videoCanvas" width="1200" height="900"></canvas>
+                <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed" style="display: none;"/>
+            </div>
+            <div class="chart-controls" style="margin-bottom: 10px; text-align: center;">
+                <label><input type="checkbox" id="showX" checked> X</label>
+                <label><input type="checkbox" id="showY" checked> Y</label>
+                <label><input type="checkbox" id="showZ" checked> Z</label>
+            </div>
+            <div class="chart-container" style="margin: 30px auto 0 auto; max-width: 1200px;">
+                <canvas id="mainChart" width="1200" height="300"></canvas>
+            </div>
         </div>
         <div class="controls">
             <div class="button-row">
@@ -20,39 +33,62 @@
                 <button id="fast_focus" class="btn" onclick="fast_forcus()">快速对焦</button>
                 <button id="save_config" class="btn" onclick="save_config()">保存设置</button>
             </div>
-            <div id="indicator" class="indicator"></div> <!-- 指示灯 -->
+            <div class="button-row">
+                <div id="indicator" class="indicator"></div> <!-- 指示灯,随时停止 -->
+                <button id="stop_move" class="btn" onclick="stop_move()">中止运动</button>
+            </div>
             <!-- X方向 -->
-            <span id="x_value" class="slider-value">X位置：0 mm</span>
+            <div class="position-row">
+                <span id="x_value" class="slider-value">X目标位置：0.00 mm</span>
+                <span id="x_current" class="current-position">当前位置：0.000 mm</span>
+            </div>
             <input type="range" id="x_pos" min="-7" max="7" step="0.01" value="0">
 
             <!-- Y方向 -->
-            <span id="y_value" class="slider-value">Y位置：0 mm</span>
+            <div class="position-row">
+                <span id="y_value" class="slider-value">Y目标位置：0.00 mm</span>
+                <span id="y_current" class="current-position">当前位置：0.000 mm</span>
+            </div>
             <input type="range" id="y_pos" min="-7" max="7" step="0.01" value="0">
 
             <!-- Z方向 -->
-            <span id="z_value" class="slider-value">Z位置：0 mm</span>
+            <div class="position-row">
+                <span id="z_value" class="slider-value">Z目标位置：0.000 mm</span>
+                <span id="z_current" class="current-position">当前位置：0.000 mm</span>
+            </div>
             <input type="range" id="z_pos" min="-5" max="5" step="0.001" value="0">
 
-            <!-- 曝光时间 -->
-            <span id="exposure_value" class="slider-value">曝光时间：10 ms</span>
-            <input type="range" id="exposure" min="1" max="500" step="1">
-
-            <!-- ISO增益 -->
-            <span id="gain_value" class="slider-value">ISO增益：1</span>
-            <input type="range" id="gain" min="1" max="10" step="0.1">
+            <!-- 曝光时间和ISO增益 -->
+            <div class="slider-row">
+                <div class="slider-group">
+                    <span id="exposure_value" class="slider-value">曝光时间：10 ms</span>
+                    <input type="range" id="exposure" min="1" max="500" step="1" value="20">
+                </div>
+                <div class="slider-group">
+                    <span id="gain_value" class="slider-value">ISO增益：1</span>
+                    <input type="range" id="gain" min="1" max="10" step="0.1" value="1.5">
+                </div>
+            </div>
 
             <!-- LED亮度 -->
             <span id="led_value" class="slider-value">LED亮度：0</span>
-            <input type="range" id="led" min="0" max="1" step="0.01">
+            <input type="range" id="led" min="0" max="100" step="1" value="10">
 
-            <!-- 白平衡增益 R -->
-            <span id="r_value" class="slider-value">白平衡红色增益：0.674</span>
-            <input type="range" id="r_bal" min="0.5" max="1.5" step="0.01">
+            <!-- 白平衡增益 R 和 B -->
+            <div class="slider-row">
+                <div class="slider-group">
+                    <span id="r_value" class="slider-value">白平衡红色增益：0.674</span>
+                    <input type="range" id="r_bal" min="0.5" max="1.5" step="0.01">
+                </div>
+                <div class="slider-group">
+                    <span id="b_value" class="slider-value">白平衡蓝色增益：0.576</span>
+                    <input type="range" id="b_bal" min="0.5" max="1.5" step="0.01">
+                </div>
+            </div>
 
-            <!-- 白平衡增益 B -->
-            <span id="b_value" class="slider-value">白平衡蓝色增益：0.576</span>
-            <input type="range" id="b_bal" min="0.5" max="1.5" step="0.01">
-
+            <!-- 延迟拍摄 -->
+            <span id="delay_value" class="slider-value">间隔录制：0 秒</span>
+            <input type="range" id="delay" min="0" max="10" step="1" value="0">
         </div>
     </div>
     <script src="{{ url_for('static', filename='js/script.js') }}"></script>

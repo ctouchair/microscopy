@@ -9,7 +9,7 @@ class VideoCamera(object):
         self.src_width, self.src_height = 3200, 2400
         self.size = size
         self.picam2 = pi_camera
-        self.picam2.framerate = 20  # 每秒30帧
+        self.picam2.framerate = 30  # 每秒30帧
         self.exposure_time = 10000
         self.analogue_gain = 1
         self.r_gain = 0.674
@@ -45,7 +45,7 @@ class VideoCamera(object):
 
     def get_frame(self):
         yuv420 = self.picam2.capture_array()
-        rgb = cv2.cvtColor(yuv420, cv2.COLOR_YUV420p2RGB)  #转换耗时30 ms
+        rgb = cv2.cvtColor(yuv420, cv2.COLOR_YUV420p2BGR)  #转换耗时30 ms
         if rgb.shape[0] > self.size[0]:
             rgb = cv2.resize(rgb, self.size, interpolation=cv2.INTER_LINEAR)  #resize， binning
         else:

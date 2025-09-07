@@ -1,0 +1,313 @@
+import cv2
+import os
+import numpy as np
+
+
+def stitch_images(images):
+    """
+    拼接图像函数，支持3x3网格拼接实现400%画幅
+    """
+    # 创建 Stitcher 对象
+    stitcher = cv2.Stitcher_create()
+
+    # 拼接图片
+    status, stitched_image = stitcher.stitch(images)
+
+    # 判断拼接是否成功
+    if status == cv2.Stitcher_OK:
+        return stitched_image
+    else:
+        return None
+
+
+def crop_center_expanding_rect(image, target_ratio=4/3):
+    """
+    从图像中心最大区域开始，按照4:3比例逐渐缩小矩形，当遇到黑边时停止
+    
+    参数:
+    - image_path: 输入图像路径
+    - output_path: 输出裁剪图像保存路径
+    - target_ratio: 目标宽高比，默认4:3
+    """
+    # 转换为灰度图
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # 获取图像中心点
+    h, w = gray.shape
+    center_y, center_x = h // 2, w // 2
+    
+    real_ratio = w/h
+    if real_ratio >= target_ratio:
+        max_w = int(center_y*target_ratio)
+    else:
+        max_w = center_x
+    
+    best_rect = None
+    
+    for size_w in range(max_w, 0, -20):  # 每次增加2像素
+        rect_width = size_w
+        rect_height = int(size_w / target_ratio)
+        
+        # 计算矩形边界
+        left = center_x - rect_width
+        right = center_x + rect_width
+        top = center_y - rect_height
+        bottom = center_y + rect_height
+        
+        # 检查是否超出图像边界
+        if size_w <= 2000  :
+            print(f"达到单张图像边界，停止收缩。最终尺寸: {rect_width}x{rect_height}")
+            break
+        # 检查矩形区域内是否有黑色像素（灰度值为0）
+        rect_region = gray[top:bottom+1, left:right+1]
+        black_pixels = np.sum(rect_region == 0)
+        if black_pixels == 0:
+            print(f"遇到黑边，停止扩展。最终尺寸: {rect_width*2}x{rect_height*2}")
+            break
+        # 更新最佳矩形
+        best_rect = (left, top, right, bottom)
+    
+    # 如果找到了有效矩形，进行裁剪
+    if best_rect:
+        left, top, right, bottom = best_rect
+        # 裁剪原始图像
+        cropped = image[top:bottom, left:right]
+        return cropped
+    else:
+        print("未找到合适的矩形区域！")
+        return None
+
+
+def calibrate_circle(image):
+    """
+    根据切片的圆形图案，校准像素尺寸
+    """
+    gray_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # 对灰度图像进行高斯模糊处理，减少噪声
+    blurred_image = cv2.GaussianBlur(gray_img, (15, 15), 0)
+
+    # 使用霍夫圆检测识别圆形
+    circles = cv2.HoughCircles(blurred_image, cv2.HOUGH_GRADIENT, dp=1.2, minDist=500,
+                            param1=50, param2=30, minRadius=400, maxRadius=700)
+
+    if circles is None:
+        print("未检测到圆形，请调整参数或检查图片。")
+        return None
+
+    # 检查是否检测到圆形
+    if circles is not None:
+        # 将圆的坐标和半径转换为整数
+        circles = np.round(circles[0, :]).astype("int")
+        d, point = [], []
+        # 输出检测到的圆形个数和每个圆形的像素面积
+        for i, (x, y, r) in enumerate(circles):
+            # 计算圆形的像素面积 (π * r^2)
+            print(f"第 {i+1} 个圆形的像素半径: {r:.2f} 像素")
+            d.append(2*r)
+            point.append((x,y))
+            # 可选：绘制圆形及其中心
+            cv2.circle(image, (x, y), r, (0, 255, 0), 4)  # 绘制圆形
+            cv2.rectangle(image, (x-5, y-5), (x+5, y+5), (0, 128, 255), -1)  # 绘制中心点
+        mean_d = np.sum(d)/len(d)
+        distance_per_pixel = 100/mean_d
+        print(f'每个像素对应的尺寸为{distance_per_pixel:.4f} um')
+        return distance_per_pixel, point
+    else:
+        return None, None
+
+
+def get_translation_shift(points1, points2):
+    points1 = np.array(points1)
+    points2 = np.array(points2)
+
+    # 计算每个点到另一组所有点的距离
+    min_distances = []
+    for p1 in points1:
+        # 计算 p1 到 points2 中每个点的距离
+        distances = np.linalg.norm(points2 - p1, axis=1)
+        # 记录最小距离
+        min_distances.append(np.min(distances))
+
+    # 找出第一组所有点之间的最小距离
+    min_distance = np.min(min_distances)
+    return min_distance
+
+
+def findHomography(image_1_kp, image_2_kp, matches):
+    image_1_points = np.zeros((len(matches), 1, 2), dtype=np.float32)
+    image_2_points = np.zeros((len(matches), 1, 2), dtype=np.float32)
+
+    for i in range(0,len(matches)):
+        image_1_points[i] = image_1_kp[matches[i].queryIdx].pt
+        image_2_points[i] = image_2_kp[matches[i].trainIdx].pt
+
+
+    homography, mask = cv2.findHomography(image_1_points, image_2_points, cv2.RANSAC, ransacReprojThreshold=2.0)
+
+    return homography
+
+
+
+def align_images(images):
+
+    #   SIFT generally produces better results, but it is not FOSS, so chose the feature detector
+    #   that suits the needs of your project.  ORB does OK
+    use_sift = True
+
+    outimages = []
+
+    if use_sift:
+        detector = cv2.xfeatures2d.SIFT_create()
+    else:
+        detector = cv2.ORB_create(1000)
+
+    #   We assume that image 0 is the "base" image and align everything to it
+    print("Detecting features of base image")
+    outimages.append(images[0])
+    image1gray = cv2.cvtColor(images[0],cv2.COLOR_BGR2GRAY)
+    image_1_kp, image_1_desc = detector.detectAndCompute(image1gray, None)
+
+    for i in range(1,len(images)):
+        print("Aligning image {}".format(i))
+        image_i_kp, image_i_desc = detector.detectAndCompute(images[i], None)
+
+        if use_sift:
+            bf = cv2.BFMatcher()
+            # This returns the top two matches for each feature point (list of list)
+            pairMatches = bf.knnMatch(image_i_desc,image_1_desc, k=2)
+            rawMatches = []
+            for m,n in pairMatches:
+                if m.distance < 0.7*n.distance:
+                    rawMatches.append(m)
+        else:
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+            rawMatches = bf.match(image_i_desc, image_1_desc)
+
+        sortMatches = sorted(rawMatches, key=lambda x: x.distance)
+        matches = sortMatches[0:128]
+
+
+
+        hom = findHomography(image_i_kp, image_1_kp, matches)
+        newimage = cv2.warpPerspective(images[i], hom, (images[i].shape[1], images[i].shape[0]), flags=cv2.INTER_LINEAR)
+
+        outimages.append(newimage)
+        # If you find that there's a large amount of ghosting, it may be because one or more of the input
+        # images gets misaligned.  Outputting the aligned images may help diagnose that.
+        # cv2.imwrite("aligned{}.png".format(i), newimage)
+
+
+
+    return outimages
+
+
+#   Compute the gradient map of the image
+def doLap(image):
+
+    # YOU SHOULD TUNE THESE VALUES TO SUIT YOUR NEEDS
+    kernel_size = 25         # Size of the laplacian window
+    blur_size = 5           # How big of a kernal to use for the gaussian blur
+                            # Generally, keeping these two values the same or very close works well
+                            # Also, odd numbers, please...
+
+    blurred = cv2.GaussianBlur(image, (blur_size,blur_size), 0)
+    return cv2.Laplacian(blurred, cv2.CV_64F, ksize=kernel_size)
+
+#
+#   This routine finds the points of best focus in all images and produces a merged result...
+#
+def focus_stack(images):
+    print("Computing the laplacian of the blurred images")
+    laps = []
+    for i in range(len(images)):
+        print("Lap {}".format(i))
+        laps.append(doLap(cv2.cvtColor(images[i],cv2.COLOR_BGR2GRAY)))
+
+    laps = np.asarray(laps)
+    print("Shape of array of laplacians = {}".format(laps.shape))
+
+    output = np.zeros(shape=images[0].shape, dtype=images[0].dtype)
+
+    abs_laps = np.absolute(laps)
+    maxima = abs_laps.max(axis=0)
+    bool_mask = abs_laps == maxima
+    mask = bool_mask.astype(np.uint8)
+    for i in range(0,len(images)):
+        output = cv2.bitwise_not(images[i],output, mask=mask[i])
+    
+    return 255-output
+
+
+def count_cells(image, pixel_size=0.09):
+    """
+    细胞计数函数
+    
+    参数:
+    - image: 输入图像
+    - pixel_size: 每个像素对应的实际尺寸 (μm/pixel)
+    
+    返回:
+    - annotated_image: 标注了细胞的图像
+    - cell_count: 细胞数量
+    - avg_diameter: 平均细胞直径 (μm)
+    """
+    # 转换为灰度图
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    
+    # 高斯模糊去噪
+    blurred = cv2.GaussianBlur(gray, (9, 9), 2)
+    
+    # 使用霍夫圆检测识别细胞
+    circles = cv2.HoughCircles(
+        blurred, 
+        cv2.HOUGH_GRADIENT, 
+        dp=1.2, 
+        minDist=30,  # 细胞间最小距离
+        param1=50, 
+        param2=30, 
+        minRadius=10,  # 最小细胞半径
+        maxRadius=100  # 最大细胞半径
+    )
+    
+    annotated_image = image.copy()
+    cell_count = 0
+    total_diameter = 0
+    
+    if circles is not None:
+        circles = np.round(circles[0, :]).astype("int")
+        cell_count = len(circles)
+        
+        # 绘制检测到的细胞
+        for i, (x, y, r) in enumerate(circles):
+            # 计算实际直径 (μm)
+            diameter_um = 2 * r * pixel_size
+            total_diameter += diameter_um
+            
+            # 绘制圆形边界
+            cv2.circle(annotated_image, (x, y), r, (0, 255, 0), 2)
+            # 绘制中心点
+            cv2.circle(annotated_image, (x, y), 2, (0, 0, 255), 3)
+            # 添加编号
+            cv2.putText(annotated_image, str(i+1), (x-10, y-r-10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 2)
+        
+        # 计算平均直径
+        avg_diameter = total_diameter / cell_count if cell_count > 0 else 0
+        
+        # 在图像上添加统计信息
+        info_text = f"Cells: {cell_count}, Avg Diameter: {avg_diameter:.1f}um"
+        cv2.putText(annotated_image, info_text, (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(annotated_image, info_text, (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 1)
+        
+        print(f"检测到 {cell_count} 个细胞")
+        print(f"平均直径: {avg_diameter:.2f} μm")
+        
+        return annotated_image, cell_count, avg_diameter
+    else:
+        print("未检测到细胞")
+        # 在图像上添加"未检测到细胞"的信息
+        cv2.putText(annotated_image, "No cells detected", (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        return annotated_image, 0, 0.0

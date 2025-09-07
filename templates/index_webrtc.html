@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Microscope Control System</title>
+    <title>WebRTC Microscope Control System</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
@@ -12,16 +12,26 @@
 <body>
     <div class="container">
         <div class="left-panel">
+            <!-- WebRTC视频预览窗口 -->
             <div class="preview">
-                <h3><i class="fas fa-camera"></i> 主摄像头预览</h3>
-                <canvas id="videoCanvas" width="1014" height="760"></canvas>
-                <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed" style="display: none;"/>
+                <h3><i class="fas fa-camera"></i> WebRTC 显微镜预览</h3>
+                <video id="webrtcVideo" autoplay playsinline muted style="width: 100%; height: auto; border: 3px solid rgba(255, 255, 255, 0.3); border-radius: 15px; background: linear-gradient(45deg, #1a1a1a, #2d2d2d);"></video>
+                <div class="webrtc-status">
+                    <span id="connectionStatus">正在连接...</span>
+                    <span id="videoStats"></span>
+                </div>
             </div>
+            
+            <!-- 辅助摄像头WebRTC预览 -->
             <div class="preview-cam1">
-                <h3><i class="fas fa-video"></i> 辅助摄像头预览</h3>
-                <canvas id="videoCanvasCam1" width="820" height="616"></canvas>
-                <img id="videoFeedCam1" src="{{ url_for('video_feed_cam1') }}" alt="Video Feed Cam1" style="display: none;"/>
+                <h3><i class="fas fa-video"></i> 辅助摄像头WebRTC预览</h3>
+                <video id="webrtcVideoCam1" autoplay playsinline muted style="width: 100%; height: auto; border: 3px solid rgba(255, 255, 255, 0.3); border-radius: 15px; background: linear-gradient(45deg, #1a1a1a, #2d2d2d);"></video>
+                <div class="webrtc-status">
+                    <span id="connectionStatusCam1">正在连接...</span>
+                    <span id="videoStatsCam1"></span>
+                </div>
             </div>
+            
             <div class="chart-controls">
                 <h4><i class="fas fa-chart-line"></i> 实时位置监控</h4>
                 <div class="chart-checkboxes">
@@ -34,9 +44,10 @@
                 <canvas id="mainChart"></canvas>
             </div>
         </div>
+        
         <div class="controls">
             <div class="controls-header">
-                <h2><i class="fas fa-microscope"></i> 显微镜控制系统</h2>
+                <h2><i class="fas fa-microscope"></i> WebRTC显微镜控制系统</h2>
             </div>
             
             <div class="button-row">
@@ -46,15 +57,9 @@
                 <button id="recordBtn" class="btn" onclick="toggleRecording()">
                     <i class="fas fa-video"></i><br>显微录制
                 </button>
-                <button id="wifiBtn" class="btn" onclick="openWifiModal()">
-                    <i class="fas fa-wifi"></i><br>WiFi设置
-                </button>
             </div>
             
             <div class="button-row">
-                <button id="autoBrightnessBtn" class="btn" onclick="autoBrightness()">
-                    <i class="fas fa-lightbulb"></i><br>自动亮度
-                </button>
                 <button id="recordCam1Btn" class="btn" onclick="toggleCam1Recording()">
                     <i class="fas fa-video"></i><br>辅助录制
                 </button>
@@ -79,7 +84,7 @@
             </div>
             
             <div class="button-row">
-                <div id="indicator" class="indicator indicator-full-width" title="点击停止电机运动">
+                <div id="indicator" class="indicator indicator-full-width" title="电机静止时显示状态，运动时点击可立即停止">
                     <i class="fas fa-stop-circle" id="indicator-icon"></i>
                     <span id="indicator-text">静止</span>
                 </div>
@@ -90,24 +95,24 @@
                 
                 <!-- X方向 -->
                 <div class="position-row">
-                    <span id="x_value" class="slider-value">X目标位置：0.00 mm</span>
+                    <span id="x_pos_value" class="slider-value">X目标位置：0.00 mm</span>
                     <span id="x_current" class="current-position">当前位置：0.000 mm</span>
                 </div>
-                <input type="range" id="x_pos" min="0" max="12" step="0.01" value="0">
+                <input type="range" id="x_pos" min="-9" max="6" step="0.01" value="0">
 
                 <!-- Y方向 -->
                 <div class="position-row">
-                    <span id="y_value" class="slider-value">Y目标位置：0.00 mm</span>
+                    <span id="y_pos_value" class="slider-value">Y目标位置：0.00 mm</span>
                     <span id="y_current" class="current-position">当前位置：0.000 mm</span>
                 </div>
-                <input type="range" id="y_pos" min="0" max="12" step="0.01" value="0">
+                <input type="range" id="y_pos" min="-9" max="7" step="0.01" value="0">
 
                 <!-- Z方向 -->
                 <div class="position-row">
-                    <span id="z_value" class="slider-value">Z目标位置：0.000 mm</span>
+                    <span id="z_pos_value" class="slider-value">Z目标位置：0.000 mm</span>
                     <span id="z_current" class="current-position">当前位置：0.000 mm</span>
                 </div>
-                <input type="range" id="z_pos" min="0" max="7" step="0.001" value="0">
+                <input type="range" id="z_pos" min="-5" max="5" step="0.001" value="0">
             </div>
 
             <div class="control-section">
@@ -131,23 +136,25 @@
                     <input type="range" id="led" min="0" max="100" step="1" value="10">
                 </div>
 
-                <!-- 白平衡增益 R 和 B -->
-                <div class="slider-row">
-                    <div class="slider-group">
-                        <span id="r_value" class="slider-value">白平衡红色增益：0.674</span>
-                        <input type="range" id="r_bal" min="0.5" max="1" step="0.01">
-                    </div>
-                    <div class="slider-group">
-                        <span id="b_value" class="slider-value">白平衡蓝色增益：0.576</span>
-                        <input type="range" id="b_bal" min="0.5" max="1" step="0.01">
-                    </div>
-                </div>
-
-                <!-- 延迟拍摄 -->
+                <!-- 录制延迟 -->
                 <div class="slider-single">
                     <span id="delay_value" class="slider-value">间隔录制：0 秒</span>
                     <input type="range" id="delay" min="0" max="10" step="0.2" value="0">
                 </div>
+
+                <!-- 白平衡增益 R 和 B -->
+                <div class="slider-row">
+                    <div class="slider-group">
+                        <span id="r_bal_value" class="slider-value">白平衡红色增益：0.85</span>
+                        <input type="range" id="r_bal" min="0.5" max="1" step="0.01" value="0.85">
+                    </div>
+                    <div class="slider-group">
+                        <span id="b_bal_value" class="slider-value">白平衡蓝色增益：0.95</span>
+                        <input type="range" id="b_bal" min="0.5" max="1" step="0.01" value="0.95">
+                    </div>
+                </div>
+
+
                 
                 <!-- 校准按钮 -->
                 <div class="button-row">
@@ -174,91 +181,11 @@
                     </div>
                 </div>
                 <div id="logContent" class="log-content">
-                    <div class="log-message welcome">系统启动完成，等待连接...</div>
+                    <div class="log-message welcome">WebRTC系统启动完成，等待连接...</div>
                 </div>
             </div>
         </div>
     </div>
-
-    <!-- WiFi设置模态框 -->
-    <div id="wifiModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3><i class="fas fa-wifi"></i> WiFi网络设置</h3>
-                <span class="close" onclick="closeWifiModal()">&times;</span>
-            </div>
-            <div class="modal-body">
-                <div class="wifi-section">
-                    <div class="wifi-status">
-                        <h4><i class="fas fa-signal"></i> 当前连接状态</h4>
-                        <div id="currentWifiStatus" class="status-info">
-                            <div class="status-item">
-                                <span class="status-label">网络名称：</span>
-                                <span id="currentSSID">检查中...</span>
-                            </div>
-                            <div class="status-item">
-                                <span class="status-label">IP地址：</span>
-                                <span id="currentIP">检查中...</span>
-                            </div>
-                            <div class="status-item">
-                                <span class="status-label">信号强度：</span>
-                                <span id="currentSignal">检查中...</span>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="wifi-scan">
-                        <div class="scan-header">
-                            <h4><i class="fas fa-search"></i> 可用网络</h4>
-                            <button id="scanBtn" class="scan-btn" onclick="scanWifiNetworks()">
-                                <i class="fas fa-sync-alt"></i> 扫描
-                            </button>
-                        </div>
-                        <div id="wifiList" class="wifi-list">
-                            <div class="loading">正在扫描WiFi网络...</div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- WiFi连接模态框 -->
-    <div id="wifiConnectModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h3><i class="fas fa-key"></i> 连接到WiFi网络</h3>
-                <span class="close" onclick="closeWifiConnectModal()">&times;</span>
-            </div>
-            <div class="modal-body">
-                <div class="connect-form">
-                    <div class="form-group">
-                        <label for="connectSSID">网络名称 (SSID)：</label>
-                        <input type="text" id="connectSSID" readonly>
-                    </div>
-                    <div class="form-group">
-                        <label for="connectPassword">密码：</label>
-                        <div class="password-input">
-                            <input type="password" id="connectPassword" placeholder="请输入WiFi密码">
-                            <button type="button" class="password-toggle" onclick="togglePasswordVisibility()">
-                                <i class="fas fa-eye"></i>
-                            </button>
-                        </div>
-                    </div>
-                    <div class="form-actions">
-                        <button id="connectBtn" class="btn-primary" onclick="connectToWifi()">
-                            <i class="fas fa-wifi"></i> 连接
-                        </button>
-                        <button class="btn-secondary" onclick="closeWifiConnectModal()">
-                            取消
-                        </button>
-                    </div>
-                </div>
-                <div id="connectStatus" class="connect-status"></div>
-            </div>
-        </div>
-    </div>
-
-    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/webrtc_script.js') }}"></script>
 </body>
-</html>
+</html> 

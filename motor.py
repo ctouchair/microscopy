@@ -18,21 +18,21 @@ def setup(IN1, IN2, IN3, IN4):
 
     
 def direction(pos='X'):
-    if pos == 'Y':
-        IN1 = 32    # pin32
-        IN2 = 36
+    if pos == 'X':
+        IN1 = 7    # pin32
+        IN2 = 13
+        IN3 = 15
+        IN4 = 16
+    elif pos == 'Y':
+        IN1 = 18    # pin32
+        IN2 = 22
+        IN3 = 29
+        IN4 = 31
+    elif pos == 'Z':
+        IN1 = 36    # pin32
+        IN2 = 37
         IN3 = 38
         IN4 = 40
-    elif pos == 'X':
-        IN1 = 7    # pin32
-        IN2 = 11
-        IN3 = 13
-        IN4 = 15
-    elif pos == 'Z':
-        IN1 = 31    # pin32
-        IN2 = 33
-        IN3 = 35
-        IN4 = 37
     else:
         IN1, IN2, IN3, IN4 = None, None, None, None
     return IN1, IN2, IN3, IN4
@@ -55,25 +55,27 @@ class motor():
         gpio_setup()
         self.direction = 'X'
         self.i2c = busio.I2C(board.SCL, board.SDA)
-        self.ads = ADS.ADS1115(self.i2c)
+        self.ads = ADS.ADS1115(self.i2c, address=0x49)
 
-        self.channel_X = AnalogIn(self.ads, ADS.P0)
-        self.channel_Y = AnalogIn(self.ads, ADS.P1)
-        self.channel_Z = AnalogIn(self.ads, ADS.P2)
+        self.channel_Z = AnalogIn(self.ads, ADS.P0, ADS.P3)#
+        self.channel_Y = AnalogIn(self.ads, ADS.P1, ADS.P3)#
+        self.channel_X = AnalogIn(self.ads, ADS.P2, ADS.P3)#, ADS.P3
         self.channel_R = AnalogIn(self.ads, ADS.P3)
        
         self.status = False
         self.x_pos = 0  #记录运动步数
-        self.y_pos = 0
+        self.y_pos = 0  
         self.z_pos = 0
         self.focus = False
         self.focus_pos = 0
         self.focus_get = False
+        self.steps_per_mm = 1450
 
-        self.led_cycle = 0
-        self.pwm = HardwarePWM(pwm_channel=2, hz=100, chip=0)  # 2通道对应gpio18
-        self.pwm.start(self.led_cycle) # full duty cycle
-
+        self.led_cycle0, self.led_cycle1 = 0, 0
+        self.pwm0 = HardwarePWM(pwm_channel=0, hz=100, chip=0)  # 0通道对应12，1--13，2--18，3--19
+        self.pwm0.start(self.led_cycle0) # full duty cycle
+        self.pwm1 = HardwarePWM(pwm_channel=1, hz=100, chip=0)  # 0通道对应12，1--13，2--18，3--19
+        self.pwm1.start(self.led_cycle1) # full duty cycle
 
 
     def move(self, step=0):
@@ -97,16 +99,18 @@ class motor():
             if steps > 0:
                 for i in range(0, steps):
                     if not self.status:
+                        setStep(IN1, IN2, IN3, IN4, 0, 0, 0, 0)
                         break
                     else:
+                        setStep(IN1, IN2, IN3, IN4, 1, 0, 0, 1)
+                        time.sleep(delay)
                         setStep(IN1, IN2, IN3, IN4, 0, 0, 1, 1)
                         time.sleep(delay)
                         setStep(IN1, IN2, IN3, IN4, 0, 1, 1, 0)
                         time.sleep(delay)
                         setStep(IN1, IN2, IN3, IN4, 1, 1, 0, 0)
                         time.sleep(delay)
-                        setStep(IN1, IN2, IN3, IN4, 1, 0, 0, 0)
-                        time.sleep(delay)
+                        setStep(IN1, IN2, IN3, IN4, 0, 0, 0, 0)
                         if self.direction == 'X':
                             self.x_pos += 1
                         elif self.direction == 'Y':
@@ -132,61 +136,53 @@ class motor():
                             self.y_pos -= 1
                         elif self.direction == 'Z':
                             self.z_pos -= 1
+            setStep(IN1, IN2, IN3, IN4, 0, 0, 0, 0)
             self.status = False
+
         else:
             print('GPIO IN Error !!')
 
-    def set_led_power(self):
-        self.pwm.change_duty_cycle(self.led_cycle)
-        self.pwm.change_frequency(25_000)
+    def set_led_power0(self):
+        self.pwm0.change_duty_cycle(self.led_cycle0)
+        self.pwm0.change_frequency(25_000)
+
+    def set_led_power1(self):
+        self.pwm1.change_duty_cycle(self.led_cycle1)
+        self.pwm1.change_frequency(25_000)
 
 # motor_move = motor()
-# motor_move.direction = 'X'
-# step = 12800
+# motor_move.direction = 'Z'
+# i = 0
+# # led_power = [1, 0.3, 0.5, 0.7, 0.8, 0.9]
+
+# while True:
+#     # motor_move.status = True
+#     # motor_move.move(-300)
+#     x_vol = motor_move.measure_voltage('X')
+#     y_vol = motor_move.measure_voltage('Y')
+#     z_vol = motor_move.measure_voltage('Z')
+#     r_vol = motor_move.measure_voltage('R')
+#     print(x_vol, y_vol, z_vol, r_vol)
+#     # motor_move.status = True
+#     # motor_move.move(300)
+#     # print(x_vol, y_vol, z_vol, r_vol)
+#     # motor_move.led_cycle1 = led_power[-int(i%len(led_power))]
+#     # motor_move.set_led1_power()
+#     time.sleep(0.5)
+#     i += 1
+
+
+# step = 128
 # motor_move.status = True
 # motor_move.move(step)
 # time.sleep(0.01)
 # data = []
-# x_vol = 1.7
-# def arctan_func(x, A, B, C, D):
-#     return A * np.arctan(B * x + C) + D
-
-# while 1.27<x_vol<2.03:
+# vol = 1.7
+# while 1<vol<1.8:
 #     motor_move.status = True
 #     motor_move.move(step)
 #     time.sleep(0.01)
-#     x_vol = motor_move.measure_voltage('X')
-#     r_vol = motor_move.measure_voltage('R')
-#     pos = arctan_func(x_vol, 11.868, 2.776, -4.678, 0.282)*1024
-#     data.append([motor_move.x_pos, x_vol])
-#     print(x_vol, motor_move.x_pos, pos, r_vol, r_vol-x_vol)
-# np.savetxt('data.txt',data)
-
-
-# end_voltage = 1.7
-# step = 256
-# data = []
-# x_end = [1.27, 2.06]
-# y_end = [1.33, 2.12]
-# z_end = [1.11, 1.97]
-# step_cnt = 0
-# if motor_move.direction == 'X':
-#     end = x_end
-# elif motor_move.direction == 'Y':
-#     end = y_end
-# elif motor_move.direction == 'Z':
-#     end = z_end
-# while end_voltage < end[1] and end_voltage > end[0]:
-#     start_voltage = motor_move.measure_voltage()
-#     motor_move.move(step)
-#     step_cnt += step
-#     end_voltage = motor_move.measure_voltage()
-#     delta_voltage = end_voltage - start_voltage
-#     if delta_voltage == 0:
-#         continue
-#     else:
-#         step_ratio = int(step/(end_voltage - start_voltage))
-#         time.sleep(0.1)
-#         data.append([step_ratio, end_voltage, step_cnt])
-#         print(f'{step_ratio}, {end_voltage}, {step_cnt}')
+#     vol = motor_move.measure_voltage('Z')
+#     data.append([motor_move.z_pos, vol])
+#     print(vol, motor_move.z_pos)
 # np.savetxt('data.txt',data)

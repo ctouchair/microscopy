@@ -1,0 +1,1517 @@
+from flask import Flask, render_template, Response, jsonify, send_file, request, send_from_directory
+from tqdm import tqdm
+import time
+import os
+from picamera2 import Picamera2
+from camera import VideoCamera
+import multiprocessing
+import cv2
+import threading
+from motor import motor
+from PIL import Image
+from flask_socketio import SocketIO, emit, send
+import json
+import numpy as np
+import base64
+import io
+from utils import stitch_images, crop_center_expanding_rect, calibrate_circle, get_translation_shift, focus_stack, count_cells
+
+imx477_dict = {
+    "preview_size": (1014, 760),  # 预览分辨率
+    "video_size": (2028, 1520),   # 视频分辨率
+    "image_size": (4056, 3040),    # 图片分辨率
+    "frame_rate": 20  # 视频帧率
+}
+imx219_dict = {
+    "preview_size": (820, 616),  # 预览分辨率
+    "video_size": (1640, 1232),   # 视频分辨率
+    "image_size": (3280, 2464),    # 图片分辨率
+    "frame_rate": 10  # 视频帧率
+}
+
+
+app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*")
+
+# 日志发送函数
+def send_log_message(message, log_type='info'):
+    """发送日志消息到前端"""
+    try:
+        socketio.emit('log_message', {'message': message, 'type': log_type})
+    except Exception as e:
+        print(f"Failed to send log message: {e}")
+
+cam0 = VideoCamera(Picamera2(1), preview_size=imx477_dict["preview_size"], video_size=imx477_dict["video_size"], image_size=imx477_dict["image_size"], framerate=imx477_dict["frame_rate"])
+cam1 = VideoCamera(Picamera2(0), preview_size=imx219_dict["preview_size"], video_size=imx219_dict["video_size"], image_size=imx219_dict["image_size"], framerate=imx219_dict["frame_rate"])
+
+motor0 = motor()
+# 控制录像状态
+is_recording = False
+video_writer = None
+is_veiwing = True # 控制摄像头是否在运行
+move_task = False
+recording_interval = 0  # 拍摄间隔时间（秒），0表示不进行间隔拍摄
+
+# 辅助摄像头录制状态
+is_recording_cam1 = False
+video_writer_cam1 = None
+current_video_filename_cam1 = None
+cam1_previous_frame = None
+cam1_motion_detected = False
+cam1_last_motion_time = 0
+cam1_motion_threshold = 0.5  # 运动检测阈值
+cam1_motion_cooldown = 2.0  # 运动检测冷却时间（秒）
+
+# 定期清理缓存文件
+cleanup_interval = 3600  # 每小时清理一次（秒）
+
+# 存储照片和录像的目录
+SAVE_DIR = '/home/admin/Documents/project/static'
+if not os.path.exists(SAVE_DIR):
+    os.makedirs(SAVE_DIR)
+
+
+queues_dict = {
+    'rgb': multiprocessing.Queue(),
+    'frame_len': multiprocessing.Queue(),
+    'cam1_rgb': multiprocessing.Queue(),
+}
+
+
+# 开启摄像头预览及队列
+def generate_frames():
+    """
+    不采用全速写入的方式，微观领域帧率不是关键因素
+    """
+    global is_veiwing
+    cam0.__stop__()
+    time.sleep(0.5)
+    cam0.preview_config()
+    time.sleep(0.5)
+    pbar = tqdm(total=0, dynamic_ncols=True)
+    max_sharpness, z_pos_array, sharp_array = 0, [], []
+    motor0.focus_get = False
+    while is_veiwing := True:
+        frame, rgb = cam0.get_frame(awb=True)  #rgb图片是用于视频写入保存，为视频分辨率
+        frame_sharpness = len(frame)
+        if queues_dict['rgb'].empty():queues_dict['rgb'].put(rgb)
+        if queues_dict['frame_len'].empty():queues_dict['frame_len'].put(frame_sharpness)
+        if motor0.focus == True and motor0.direction == 'Z':  #开始对焦流程,直接找峰值，记录z和sharpness数组
+            z_pos_array.append(motor0.z_pos)
+            sharp_array.append(frame_sharpness)
+            if frame_sharpness >= max_sharpness:
+                max_sharpness = frame_sharpness
+                motor0.focus_pos = motor0.z_pos
+            # 峰值不能在边缘，第一次扫描结束
+            if max_sharpness > 1.2*np.mean(sharp_array) and (min(z_pos_array)+100 < motor0.focus_pos < max(z_pos_array)-100) and motor0.focus_get == False:
+                motor0.status, motor0.focus_get = False, True
+                print(motor0.focus_pos, max_sharpness)
+            # 第二次回扫，确定最终点,20 FPS有可能错过，主要是硬件光照灯不稳定，可能会有差别,如果判断不到则依赖局部最优
+            if abs(frame_sharpness/max_sharpness-1) < 0.02 and motor0.focus_get:
+                print('get best focus', frame_sharpness)
+                motor0.focus, motor0.status, motor0.focus_get = False, False, False
+                motor0.direction = ''  # Use empty string instead of None
+        else:  # 退出对焦流程，重置
+            max_sharpness, motor0.focus_get = 0, False
+            z_pos_array, sharp_array = [], []
+        
+        # Send frame via SocketIO for real-time streaming
+        try:
+            # Convert frame to base64 for SocketIO transmission
+            frame_base64 = base64.b64encode(frame).decode('utf-8')
+            socketio.emit('video_frame', {'frame': frame_base64})
+        except Exception as e:
+            print(f"Error sending frame: {e}")
+            
+        yield (b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+        pbar.update(1)  # 更新进度条
+
+
+# 开启cam1摄像头预览
+def generate_frames_cam1():
+    """
+    cam1的视频流生成函数
+    """
+    global is_veiwing
+    cam1.__stop__()
+    time.sleep(0.5)
+    cam1.exposure_time = 20000
+    cam1.preview_config()
+    time.sleep(0.5)
+    pbar = tqdm(total=0, dynamic_ncols=True)
+    while is_veiwing := True:
+        frame, rgb = cam1.get_frame(awb=False, flip=True, to_bgr=True)
+        if queues_dict['cam1_rgb'].empty():queues_dict['cam1_rgb'].put(rgb)
+        # Send frame via SocketIO for real-time streaming
+        try:
+            # Convert frame to base64 for SocketIO transmission
+            frame_base64 = base64.b64encode(frame).decode('utf-8')
+            socketio.emit('video_frame_cam1', {'frame': frame_base64})
+        except Exception as e:
+            print(f"Error sending cam1 frame: {e}")
+            
+        yield (b'--frame\r\n'
+                b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+        pbar.update(1)  # 更新进度条
+
+
+# 录制视频
+def record_video():
+    global is_recording, video_writer, current_video_filename, recording_interval
+    rgb = queues_dict['rgb'].get()
+    time.sleep(0.1)  # 等待队列中的数据稳定
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    current_video_filename = os.path.join(SAVE_DIR, f'{timestamp}.avi')
+    video_writer = cv2.VideoWriter(current_video_filename, fourcc, imx477_dict["frame_rate"], cam0.video_size, isColor=True)
+    i, max_frame = 0, 20000
+    while is_recording or not queues_dict['rgb'].empty():
+        rgb = queues_dict['rgb'].get()
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB, rgb)  # 写入图象时，会替换通道
+        if i < max_frame:
+            if recording_interval > 0 :
+                time.sleep(recording_interval)
+            video_writer.write(bgr)
+        else:
+            is_recording = False
+        i += 1
+    video_writer.release()
+
+
+def record_video_cam1():
+    """辅助摄像头动态录制函数"""
+    global is_recording_cam1, video_writer_cam1, current_video_filename_cam1
+    global cam1_previous_frame, cam1_motion_detected, cam1_last_motion_time
+    
+    # 初始化视频写入器
+    fourcc = cv2.VideoWriter_fourcc(*'XVID')
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    current_video_filename_cam1 = os.path.join(SAVE_DIR, f'cam1_{timestamp}.avi')
+    video_writer_cam1 = cv2.VideoWriter(current_video_filename_cam1, fourcc, 10, cam1.video_size, isColor=True)
+    
+    send_log_message('辅助摄像头录制已开始', 'info')
+    # 只选择图像视野中心1/4区域进行运动检测
+    width, height =  cam1.video_size
+    center_x = width // 2
+    center_y = height // 2
+    roi_width = width // 4
+    roi_height = height // 4
+    
+    # 计算ROI区域的边界
+    roi_x1 = center_x - roi_width // 2
+    roi_y1 = center_y - roi_height // 2
+    roi_x2 = center_x + roi_width // 2
+    roi_y2 = center_y + roi_height // 2
+    while is_recording_cam1 or not queues_dict['cam1_rgb'].empty():
+        try:
+            # 获取当前帧
+            rgb = queues_dict['cam1_rgb'].get()
+            
+            # 转换为灰度图进行运动检测
+            gray = cv2.cvtColor(rgb, cv2.COLOR_RGB2GRAY)
+            gray = cv2.GaussianBlur(gray, (21, 21), 0)
+            
+            # 运动检测
+            if cam1_previous_frame is not None:
+                
+                # 提取当前帧的中心1/4区域
+                current_roi = gray[roi_y1:roi_y2, roi_x1:roi_x2]
+                
+                # 提取前一帧的中心1/4区域
+                prev_roi = cam1_previous_frame[roi_y1:roi_y2, roi_x1:roi_x2]
+                
+                # 计算帧差
+                frame_delta = cv2.absdiff(prev_roi, current_roi)
+                thresh = cv2.threshold(frame_delta, 25, 255, cv2.THRESH_BINARY)[1]
+                
+                # 计算运动区域（只计算ROI区域）
+                motion_pixels = cv2.countNonZero(thresh)
+                total_pixels = thresh.shape[0] * thresh.shape[1]
+                motion_ratio = motion_pixels / total_pixels * 100
+                
+                current_time = time.time()
+                # 检测到运动
+                if motion_ratio > cam1_motion_threshold:
+                    cam1_motion_detected = True
+                    cam1_last_motion_time = current_time
+                    # 以10fps录制
+                    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                    video_writer_cam1.write(bgr)
+                    time.sleep(0.1)  # 100ms间隔，10fps
+                    # 发送运动检测状态
+                    socketio.emit('motion_status', {'motion_detected': True, 'ratio': round(motion_ratio, 2)})
+                else:
+                    # 检查是否在冷却期内
+                    if current_time - cam1_last_motion_time < cam1_motion_cooldown:
+                        # 冷却期内继续以10fps录制
+                        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                        video_writer_cam1.write(bgr)
+                        time.sleep(0.1)
+                    else:
+                        # 冷却期后以1fps录制
+                        if cam1_motion_detected:
+                            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                            video_writer_cam1.write(bgr)
+                            time.sleep(1.0)  # 1秒间隔，1fps
+                            cam1_motion_detected = False
+                        else:
+                            # 没有运动时也以1fps录制
+                            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                            video_writer_cam1.write(bgr)
+                            time.sleep(1.0)
+            else:
+                # 第一帧，直接写入
+                bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                video_writer_cam1.write(bgr)
+                time.sleep(0.1)
+            
+            # 更新前一帧
+            cam1_previous_frame = gray.copy()
+            
+        except Exception as e:
+            print(f"Cam1 recording error: {e}")
+            time.sleep(0.1)
+    
+    # 录制结束，释放资源
+    if video_writer_cam1 is not None:
+        video_writer_cam1.release()
+        video_writer_cam1 = None
+    
+    send_log_message('辅助摄像头录制已停止', 'info')
+
+
+def load_settings():
+    try:
+        with open('/home/admin/Documents/project/settings.json', 'r') as f:
+            settings = json.load(f)
+            cam0.exposure_time = int(settings['exposure_value']*1000)
+            cam0.analogue_gain = settings['gain_value']
+            cam0.r_gain = settings['r_value']
+            cam0.b_gain = settings['b_value']
+            motor0.led_cycle1 = int(settings['led_value'])
+            motor0.set_led_power1()
+            # 读取校准的步数值，如果不存在则使用默认值1500
+            cam0.pixel_size = settings.get('pixel_size', 0.09)
+            print(f"Loaded pixel_size: {cam0.pixel_size}")
+        return settings
+    except FileNotFoundError:
+        print("Settings file not found. Using default settings.")
+        return {}  # 如果文件不存在，返回空字典或默认设置
+
+
+def arctan_func(x, A, B, C, D):
+    return A * np.arctan(B*(x-C)) + D
+
+# SocketIO event handlers
+@socketio.on('connect')
+def handle_connect():
+    print('Client connected')
+    send_log_message('客户端已连接', 'success')
+    # Load motor positions and send initial settings to client
+    # motor_positions = load_motor_positions()
+    settings = load_settings()
+    x_vol = motor0.measure_voltage('X')
+    y_vol = motor0.measure_voltage('Y')
+    z_vol = motor0.measure_voltage('Z')
+    with open('/home/admin/Documents/project/params.json', 'r', encoding='utf-8') as f:
+        data_params = json.load(f)
+        f.close()
+    params_x = data_params['X']
+    params_y = data_params['Y']
+    params_z = data_params['Z']
+    motor0.x_pos = int(arctan_func(x_vol, params_x[0], params_x[1], params_x[2], params_x[3])*motor0.steps_per_mm)
+    motor0.y_pos = int(arctan_func(y_vol, params_y[0], params_y[1], params_y[2], params_y[3])*motor0.steps_per_mm)
+    motor0.z_pos = int(arctan_func(z_vol, params_z[0], params_z[1], params_z[2], params_z[3])*motor0.steps_per_mm)
+    print(x_vol, motor0.x_pos)
+    # Combine settings with motor positions
+    initial_data = {
+        **settings,
+        'x_pos': round(motor0.x_pos / motor0.steps_per_mm, 2),  # Convert steps to mm
+        'y_pos': round(motor0.y_pos / motor0.steps_per_mm, 2),
+        'z_pos': round(motor0.z_pos / motor0.steps_per_mm, 2)
+    }
+    emit('settings_update', initial_data)
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    print('Client disconnected')
+    send_log_message('客户端已断开连接', 'warning')
+    global is_veiwing, is_recording, video_writer, is_recording_cam1, video_writer_cam1
+    """断开连接时，停止所有功能"""
+    is_veiwing = False
+    is_recording = False
+    is_recording_cam1 = False
+    if video_writer is not None:
+        video_writer.release()
+    if video_writer_cam1 is not None:
+        video_writer_cam1.release()
+    cam0.__stop__() # 停止摄像头
+    cam1.__stop__() # 停止cam1摄像头
+    motor0.status = False
+    motor0.led_cycle1 = 0
+    motor0.set_led_power1()
+    emit('closed', {'status': 'success', 'message': 'System closed'})
+
+
+@socketio.on('get_settings')
+def handle_get_settings():
+    settings = load_settings()
+    emit('settings_update', settings)
+
+
+@socketio.on('capture')
+def handle_capture():
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    rgb = cam0.capture_config()
+    rgb[:,:,0] = rgb[:,:,0] * cam0.r_gain  # 调整红色
+    rgb[:,:,2] = rgb[:,:,2] * cam0.b_gain  # 调整绿色
+    pil_image = Image.fromarray(rgb) #PIL编码
+    # 使用Pillow进行编码
+    img_byte_arr = io.BytesIO()
+    pil_image.save(img_byte_arr, format='jpeg')
+    file_data = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
+    emit('capture_response', {
+        'success': True,
+        'filename': f'{timestamp}.jpeg',
+        'data': file_data
+    })
+
+    cam0.preview_config()
+    
+
+
+@socketio.on('start_recording')
+def handle_start_recording(data=None):
+    global is_recording, recording_interval
+    if not is_recording:
+        # Get the current recording interval from frontend if provided
+        if data and 'interval' in data:
+            recording_interval = float(data['interval'])
+        
+        is_recording = True
+        threading.Thread(target=record_video).start()
+        
+        # 如果设置了间隔录制，显示间隔信息
+        if recording_interval > 0:
+            interval_info = f"Recording started with interval frames every {recording_interval} seconds"
+        else:
+            interval_info = "Recording started"
+            
+        emit('recording_status', {'recording': True, 'message': interval_info, 'interval': recording_interval})
+    else:
+        emit('recording_status', {'recording': True, 'message': 'Recording already in progress'})
+
+
+@socketio.on('stop_recording')
+def handle_stop_recording():
+    global is_recording, current_video_filename
+    if is_recording:
+        is_recording = False
+        if os.path.exists(current_video_filename):
+            size = os.path.getsize(current_video_filename)
+            print(current_video_filename, size)
+            # Send file as base64
+            with open(current_video_filename, 'rb') as f:
+                file_data = base64.b64encode(f.read()).decode('utf-8')
+            emit('recording_response', {
+                'success': True,
+                'filename': os.path.basename(current_video_filename),
+                'data': file_data
+            })
+        else:
+            emit('recording_response', {'success': False, 'error': 'No video file found'})
+        cam0.preview_size = imx477_dict["preview_size"]
+    else:
+        emit('recording_response', {'success': False, 'error': 'Recording is not in progress'})
+
+
+@socketio.on('start_recording_cam1')
+def handle_start_recording_cam1():
+    global is_recording_cam1
+    if not is_recording_cam1:
+        is_recording_cam1 = True
+        threading.Thread(target=record_video_cam1).start()
+        emit('recording_cam1_status', {'recording': True, 'message': '辅助摄像头录制已开始'})
+    else:
+        emit('recording_cam1_status', {'recording': True, 'message': '辅助摄像头录制已在进行中'})
+
+
+@socketio.on('stop_recording_cam1')
+def handle_stop_recording_cam1():
+    global is_recording_cam1, current_video_filename_cam1
+    if is_recording_cam1:
+        is_recording_cam1 = False
+        time.sleep(0.5)  # 等待录制线程结束
+        
+        if os.path.exists(current_video_filename_cam1):
+            size = os.path.getsize(current_video_filename_cam1)
+            print(f"Cam1 video: {current_video_filename_cam1}, size: {size}")
+            # Send file as base64
+            with open(current_video_filename_cam1, 'rb') as f:
+                file_data = base64.b64encode(f.read()).decode('utf-8')
+            emit('recording_cam1_response', {
+                'success': True,
+                'filename': os.path.basename(current_video_filename_cam1),
+                'data': file_data
+            })
+        else:
+            emit('recording_cam1_response', {'success': False, 'error': 'No cam1 video file found'})
+    else:
+        emit('recording_cam1_response', {'success': False, 'error': 'Cam1 recording is not in progress'})
+
+
+@socketio.on('stitch_images')
+def handle_stitch_images():
+    try:
+        # 发送开始拼接的状态
+        emit('stitch_status', {'status': 'started', 'message': '开始图像拼接...'})
+        
+        # 实现400%画幅拼接（2x2网格）
+        # 拍摄4张图片，每张图片移动一定距离
+        images = []
+        
+        # 保存当前位置
+        original_x = motor0.x_pos
+        original_y = motor0.y_pos
+        
+        # 计算移动步长（根据图像分辨率和视野计算）
+        # 假设图像视野为0.4mm x 0.3mm，需要50%重叠区域
+        # 每张图片移动0.2mm，确保有足够重叠
+        step_x_size = int(1024 * 0.32)  # 0.32mm步长，确保30%重叠
+        step_y_size = int(1024* 0.24)  # 0.24mm步长，确保30%重叠
+        # 拍摄3x3网格的图片，从左上角开始
+        # 贪吃蛇形状运动：左上→右上→右中→右下→中下→中中→中上→左中→左上
+        # 每张图片移动步长，确保有足够重叠区域进行拼接
+        positions = [
+            (-step_x_size, -step_y_size),     # 左上
+            (step_x_size, 0),     # 中上
+            (step_x_size, 0),      # 右上
+            (0, step_y_size),      # 右中
+            (-step_x_size, 0),     # 中中
+            (-step_x_size, 0),      # 左中
+            (0, step_y_size),     # 左下
+            (step_x_size, 0),     # 中下
+            (step_x_size, 0),      # 右下
+        ]
+        
+        for i, (dx, dy) in enumerate(positions):
+            send_log_message(f'拍摄第 {i+1}/9 张拼接图片', 'info')
+            # 移动到指定位置
+            if dx != 0:
+                motor0.direction = 'X'
+                motor0.status = True
+                motor0.move(dx)
+                time.sleep(0.1)  # 等待移动完成，确保稳定
+            
+            if dy != 0:
+                motor0.direction = 'Y'
+                motor0.status = True
+                motor0.move(dy)
+                time.sleep(0.1)  # 等待移动完成，确保稳定
+            
+            # 拍摄图片
+            rgb = cam0.capture_config()
+            rgb[:,:,0] = rgb[:,:,0] * cam0.r_gain
+            rgb[:,:,2] = rgb[:,:,2] * cam0.b_gain
+
+            images.append(rgb)
+            
+            # 恢复预览模式
+            cam0.preview_config()
+        
+        # 恢复原始位置
+        motor0.direction = 'X'
+        motor0.status = True
+        motor0.move(original_x - motor0.x_pos)
+        time.sleep(0.1)
+        
+        motor0.direction = 'Y'
+        motor0.status = True
+        motor0.move(original_y - motor0.y_pos)
+        time.sleep(0.1)
+        
+        # 拼接图像
+        send_log_message('正在处理图像拼接...', 'info')
+        stitched_image = stitch_images(images)
+        
+        if stitched_image is not None:
+            stitched_image = cv2.cvtColor(stitched_image, cv2.COLOR_BGR2RGB)
+            
+            # 裁剪黑边
+            stitched_image = crop_center_expanding_rect(stitched_image)
+            
+            # 生成拼接后的图像文件名（不保存到本地）
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            stitched_filename = f'stitched_{timestamp}.jpeg'
+            
+            # 直接将拼接图像转换为base64，不保存到本地
+            # 使用cv2.imencode将图像编码为内存中的字节流
+            _, buffer = cv2.imencode('.jpeg', stitched_image)
+            file_data = base64.b64encode(buffer).decode('utf-8')
+            
+            emit('stitch_response', {
+                'success': True,
+                'filename': stitched_filename,
+                'data': file_data
+            })
+        else:
+            emit('stitch_response', {
+                'success': False,
+                'error': 'Image stitching failed'
+            })
+            
+    except Exception as e:
+        print(f"Stitch error: {e}")
+        emit('stitch_response', {
+            'success': False,
+                'error': str(e)
+        })
+
+
+@socketio.on('focus_stack')
+def handle_focus_stack():
+    try:
+        # 发送开始景深堆叠的状态
+        emit('focus_stack_status', {'status': 'started', 'message': '开始景深堆叠...'})
+        
+        # 拍摄不同Z轴位置的5张照片
+        images = []
+        
+        # 保存当前Z位置
+        original_z = motor0.z_pos
+        
+        # 计算Z轴移动步长（每张图片间隔0.02mm，总共覆盖0.08mm景深）
+        step_z_size = int(5)  # 0.02mm步长
+        z_positions = [-3*step_z_size, -2*step_z_size, -step_z_size, 0, step_z_size, 2*step_z_size, 3*step_z_size]  # 7个位置
+        
+        for i, dz in enumerate(z_positions):
+            send_log_message(f'拍摄第 {i+1}/{len(z_positions)} 张景深图片', 'info')
+            # 移动到指定Z位置
+            if dz != 0:
+                motor0.direction = 'Z'
+                motor0.status = True
+                target_z = original_z + dz
+                motor0.move(target_z - motor0.z_pos)
+                time.sleep(0.2)  # 等待移动完成，确保稳定
+            
+            # 拍摄图片
+            rgb = cam0.capture_config()
+            rgb[:,:,0] = rgb[:,:,0] * cam0.r_gain
+            rgb[:,:,2] = rgb[:,:,2] * cam0.b_gain
+            
+            # 转换为BGR格式（OpenCV格式）
+            bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            bgr = cv2.medianBlur(bgr, 1)
+            # bgr = cv2.GaussianBlur(bgr, (3, 3), 0)
+            images.append(bgr)
+            
+            # 恢复预览模式
+            cam0.preview_config()
+            
+            # 发送进度更新
+            emit('focus_stack_progress', {'current': i+1, 'total': len(z_positions)})
+        
+        # 恢复原始Z位置
+        motor0.direction = 'Z'
+        motor0.status = True
+        motor0.move(original_z - motor0.z_pos)
+        time.sleep(0.2)
+        
+        # 景深堆叠处理
+        send_log_message('正在处理景深堆叠...', 'info')
+        stacked_image = focus_stack(images)
+        # 1. 先中值滤波去除孤立杂点
+        # stacked_image = cv2.medianBlur(stacked_image, 5)
+
+        # # 2. 再用非局部均值（适合彩图/高分辨率）
+        # stacked_image = cv2.fastNlMeansDenoisingColored(stacked_image, None, h=10, hColor=10, templateWindowSize=7, searchWindowSize=21)
+
+        if stacked_image is not None:
+            # 生成景深堆叠后的图像文件名
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            stacked_filename = f'focus_stacked_{timestamp}.jpeg'
+            
+            # 直接将堆叠图像转换为base64，不保存到本地
+            _, buffer = cv2.imencode('.jpeg', stacked_image)
+            file_data = base64.b64encode(buffer).decode('utf-8')
+            
+            emit('focus_stack_response', {
+                'success': True,
+                'filename': stacked_filename,
+                'data': file_data
+            })
+        else:
+            emit('focus_stack_response', {
+                'success': False,
+                'error': 'Focus stacking failed'
+            })
+            
+    except Exception as e:
+        print(f"Focus stack error: {e}")
+        emit('focus_stack_response', {
+            'success': False,
+            'error': str(e)
+        })
+    finally:
+        cam0.preview_config()
+
+
+@socketio.on('calibrate_system')
+def handle_calibrate_system():
+    try:
+        # 发送开始校准的状态
+        emit('calibration_status', {'status': 'started', 'message': '开始系统校准...'})
+        
+
+        # 拍摄第一张样本图片
+        print("拍摄第一张校准图片...")
+        send_log_message('拍摄校准图片...', 'info')
+        rgb = cam0.capture_config()
+        # 使用calibrate_circle获得每个像素对应的实际距离
+        print("分析圆形标准件...")
+        send_log_message('分析圆形标准件...', 'info')
+        pixel_size, point = calibrate_circle(rgb)
+        if pixel_size is None:
+            emit('calibration_response', {
+                'success': False,
+                'error': '无法检测到圆形标准件，请确保视野中有圆形参考物'
+            })
+            return
+                
+        print(f"校准结果:")
+        print(f"像素尺寸: {pixel_size:.4f} μm/pixel")
+        send_log_message(f'校准完成 - 像素尺寸: {pixel_size:.4f} μm/pixel', 'success')
+        
+        
+        # 自动保存校准结果到settings.json
+        try:
+            settings = {
+                'exposure_value': cam0.exposure_time/1000,
+                'gain_value': cam0.analogue_gain,
+                'led_value': motor0.led_cycle1,
+                'r_value': cam0.r_gain,
+                'b_value': cam0.b_gain,
+                'pixel_size': pixel_size,
+            }
+            with open('/home/admin/Documents/project/settings.json', 'w') as f:
+                json.dump(settings, f)
+            print("校准结果已保存到settings.json")
+        except Exception as save_error:
+            print(f"保存校准结果失败: {save_error}")
+        
+        emit('calibration_response', {
+            'success': True,
+            'pixel_size': pixel_size,
+        })
+        
+    except Exception as e:
+        print(f"Calibration error: {e}")
+        emit('calibration_response', {
+            'success': False,
+            'error': str(e)
+        })
+    finally:
+        cam0.preview_config()
+
+
+@socketio.on('cell_count')
+def handle_cell_count():
+    try:
+        # 发送开始细胞计数的状态
+        emit('cell_count_status', {'status': 'started', 'message': '开始细胞计数...'})
+        
+        # 拍摄图片进行细胞计数
+        print("拍摄细胞计数图片...")
+        send_log_message('拍摄细胞计数图片...', 'info')
+        rgb = cam0.capture_config()
+        rgb[:,:,0] = rgb[:,:,0] * cam0.r_gain
+        rgb[:,:,2] = rgb[:,:,2] * cam0.b_gain
+        
+        # 转换为BGR格式用于OpenCV处理
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        
+        # 获取像素尺寸用于计算实际尺寸
+        pixel_size = getattr(cam0, 'pixel_size', 0.09)  # 默认值0.09 μm/pixel
+        
+        print("正在进行细胞计数...")
+        send_log_message('正在进行细胞计数...', 'info')
+        
+        # 进行细胞计数
+        annotated_image, cell_count, avg_diameter = count_cells(bgr, pixel_size)
+        
+        if annotated_image is not None:
+            # 生成细胞计数后的图像文件名
+            timestamp = time.strftime("%Y%m%d-%H%M%S")
+            count_filename = f'cell_count_{timestamp}.jpeg'
+            
+            # 直接将标注图像转换为base64，不保存到本地
+            _, buffer = cv2.imencode('.jpeg', annotated_image)
+            file_data = base64.b64encode(buffer).decode('utf-8')
+            
+            send_log_message(f'细胞计数完成 - 检测到 {cell_count} 个细胞，平均直径: {avg_diameter:.2f} μm', 'success')
+            
+            emit('cell_count_response', {
+                'success': True,
+                'filename': count_filename,
+                'data': file_data,
+                'cell_count': cell_count,
+                'avg_diameter': avg_diameter
+            })
+        else:
+            emit('cell_count_response', {
+                'success': False,
+                'error': 'Cell counting failed'
+            })
+            
+    except Exception as e:
+        print(f"Cell count error: {e}")
+        send_log_message(f'细胞计数失败: {str(e)}', 'error')
+        emit('cell_count_response', {
+            'success': False,
+            'error': str(e)
+        })
+    finally:
+        cam0.preview_config()
+
+
+@socketio.on('auto_brightness')
+def handle_auto_brightness():
+    try:
+        # 发送开始自动亮度调节的状态
+        emit('auto_brightness_status', {'status': 'started', 'message': '开始自动亮度调节...'})
+        send_log_message('开始自动亮度调节...', 'info')
+        
+        # 保存原始LED设置
+        original_led = motor0.led_cycle1
+        
+        # 测试不同LED亮度下的清晰度
+        led_values = list(range(max(0, original_led - 10), min(100, original_led + 11)))
+        max_sharpness = 0
+        optimal_led = original_led
+        sharpness_results = []
+        
+        for i, led_value in enumerate(led_values):
+            # 设置LED亮度
+            motor0.led_cycle1 = led_value
+            motor0.set_led_power1()
+            time.sleep(0.1)  # 等待LED稳定
+            
+            # 清空队列中的旧数据
+            while not queues_dict['frame_len'].empty():
+                try:
+                    queues_dict['frame_len'].get_nowait()
+                except:
+                    break
+            
+            # 等待新的帧数据
+            time.sleep(0.1)
+            
+            # 获取当前清晰度
+            try:
+                frame_sharpness = queues_dict['frame_len'].get(timeout=2.0)
+                sharpness_results.append((led_value, frame_sharpness))
+                
+                # 发送进度更新
+                emit('auto_brightness_progress', {
+                    'current': i + 1,
+                    'total': len(led_values),
+                    'led_value': led_value,
+                    'sharpness': frame_sharpness
+                })
+                
+                # 更新最优值
+                if frame_sharpness > max_sharpness:
+                    max_sharpness = frame_sharpness
+                    optimal_led = led_value
+                
+                print(f"LED {led_value}: 清晰度 {frame_sharpness}")
+                send_log_message(f'LED {led_value}: 清晰度 {frame_sharpness}', 'debug')
+                
+            except Exception as e:
+                print(f"获取清晰度数据失败 LED {led_value}: {e}")
+                sharpness_results.append((led_value, 0))
+        
+        # 设置为最优LED亮度
+        motor0.led_cycle1 = optimal_led
+        motor0.set_led_power1()
+        
+        print(f"自动亮度调节完成 - 最佳LED: {optimal_led}, 最大清晰度: {max_sharpness}")
+        send_log_message(f'自动亮度调节完成 - 最佳LED: {optimal_led}, 最大清晰度: {max_sharpness}', 'success')
+        
+        emit('auto_brightness_response', {
+            'success': True,
+            'optimal_led': optimal_led,
+            'max_sharpness': max_sharpness,
+            'results': sharpness_results
+        })
+        
+    except Exception as e:
+        print(f"Auto brightness error: {e}")
+        send_log_message(f'自动亮度调节失败: {str(e)}', 'error')
+        
+        # 恢复原始LED设置
+        motor0.led_cycle1 = original_led
+        motor0.set_led_power1()
+        
+        emit('auto_brightness_response', {
+            'success': False,
+            'error': str(e)
+        })
+
+
+@socketio.on('stop_move')
+def handle_stop_move():
+    """停止电机运动"""
+    try:
+        motor0.status = False
+        motor0.direction = ''
+        motor0.focus = False
+        emit('move_status', {'status': False, 'message': 'Moving stopped'})
+    except Exception as e:
+        print(f"Stop move error: {e}")
+        emit('move_status', {'status': False, 'message': str(e)})
+
+
+@socketio.on('set_exposure')
+def handle_set_exposure(data):
+    try:
+        exposure_time = int(data['value'])*1000
+        cam0.exposure_time = exposure_time
+        cam0.set_exposure()
+        emit('exposure_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        emit('exposure_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('set_gain')
+def handle_set_gain(data):
+    try:
+        gain = int(float(data['value']))  # Convert to int
+        cam0.analogue_gain = gain
+        cam0.set_gain()
+        emit('gain_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        emit('gain_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('set_x_pos')
+def handle_set_x_pos(data):
+    try:
+        xpos = float(data['value'])  #每移动1mm，相当于电机转steps_per_mm步
+        motor0.direction = 'X'
+        if motor0.status:
+            motor0.status = False
+            time.sleep(0.01)
+            xdelta_step = int(motor0.steps_per_mm*xpos - motor0.x_pos)  # Convert to int
+            motor0.status = True
+            motor0.move(xdelta_step)
+        else:
+            motor0.status = True
+            xdelta_step = int(motor0.steps_per_mm*xpos - motor0.x_pos)  # Convert to int
+            motor0.move(xdelta_step)
+        emit('x_pos_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        emit('x_pos_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('set_y_pos')
+def handle_set_y_pos(data):
+    try:
+        ypos = float(data['value'])  #每移动1mm，相当于电机转steps_per_mm步
+        motor0.direction = 'Y'
+        if motor0.status:
+            motor0.status = False
+            time.sleep(0.01)
+            ydelta_step = int(motor0.steps_per_mm*ypos - motor0.y_pos)  # Convert to int
+            motor0.status = True
+            motor0.move(ydelta_step)
+        else:
+            motor0.status = True
+            ydelta_step = int(motor0.steps_per_mm*ypos - motor0.y_pos)  # Convert to int
+            motor0.move(ydelta_step)
+        emit('y_pos_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        emit('y_pos_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('set_z_pos')
+def handle_set_z_pos(data):
+    try:
+        zpos = float(data['value'])  #每移动1mm，相当于电机转steps_per_mm步
+        motor0.direction, motor0.focus = 'Z', False
+        if motor0.status:
+            motor0.status = False
+            time.sleep(0.01)
+            zdelta_step = int(motor0.steps_per_mm*zpos - motor0.z_pos)  # Convert to int
+            motor0.status = True
+            motor0.move(zdelta_step)
+        else:
+            motor0.status = True
+            zdelta_step = int(motor0.steps_per_mm*zpos - motor0.z_pos)  # Convert to int
+            motor0.move(zdelta_step)
+        emit('z_pos_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        emit('z_pos_set', {'status': 'error', 'message': str(e)})
+
+
+def focus_init():
+    motor0.direction = 'Z'
+    motor0.focus = False  # 开始对焦
+    # 先扫描400步，看方向
+    motor0.status = False
+    time.sleep(0.01)
+
+
+@socketio.on('fast_focus')
+def handle_fast_focus():
+    try:
+        send_log_message('开始快速对焦...', 'info')
+        focus_init()
+        motor0.focus = True  # 开始对焦， 同步开始记录最优值
+        # 先扫描400步，看方向
+        motor0.status = True
+        _ = queues_dict['frame_len'].get()
+        test_sharpness1  = queues_dict['frame_len'].get()
+        motor0.move(200)
+        _ = queues_dict['frame_len'].get()
+        test_sharpness2  = queues_dict['frame_len'].get()
+        if test_sharpness1 >= test_sharpness2:
+            # 在当前位置的往小了走
+            z_max, z_min = motor0.z_pos+100, motor0.z_pos-3000  #搜索范围2 mm
+            # 直接平扫
+            zdelta_step = z_max - motor0.z_pos
+            motor0.status = True
+            motor0.move(zdelta_step)
+            zdelta_step = z_min - motor0.z_pos
+            motor0.status = True
+            motor0.move(zdelta_step) # 此时应该能覆盖最佳焦点，扫描结束
+            time.sleep(0.01)
+            step, iterations, phi, tolerance = 300, 0, 0.618, 1
+            z_max, z_min = motor0.z_pos, motor0.z_pos+step
+            while motor0.focus_get and iterations < 20 and z_max-z_min < tolerance:
+                z1 = int(z_max - (z_max - z_min)*phi)
+                z2 = int(z_min + (z_max - z_min)*phi)
+                zdelta_step = z2 - motor0.z_pos
+                motor0.status = True
+                motor0.move(zdelta_step)
+                _ = queues_dict['frame_len'].get()
+                sharpness2  = queues_dict['frame_len'].get(block=True)
+                if motor0.focus_get == True:
+                    zdelta_step = z1 - motor0.z_pos
+                    motor0.status = True
+                    motor0.move(zdelta_step)
+                    _ = queues_dict['frame_len'].get()
+                    sharpness1  = queues_dict['frame_len'].get(block=True)
+                    # 根据清晰度动态调整步长和搜索范围
+                    if sharpness1 > sharpness2: #更新右端点
+                        z_max = z2
+                    else: #更新左端点
+                        z_min = z1
+                    iterations += 1
+                # print(z2, sharpness2)
+
+        else: # 在当前位置的往大了走
+            z_max, z_min = motor0.z_pos+3000, motor0.z_pos-500  #搜索范围2 mm
+            # 直接平扫
+            zdelta_step = z_min - motor0.z_pos
+            motor0.status = True
+            motor0.move(zdelta_step)
+            zdelta_step = z_max - motor0.z_pos
+            motor0.status = True
+            motor0.move(zdelta_step) # 此时应该能覆盖最佳焦点，扫描结束
+            time.sleep(0.01)
+            step, iterations, phi, tolerance = -300, 0, 0.618, 1
+            z_max, z_min = motor0.z_pos, motor0.z_pos+step
+            while motor0.focus_get and iterations < 20 and z_max-z_min < tolerance:
+                z1 = int(z_max - (z_max - z_min)*phi)
+                z2 = int(z_min + (z_max - z_min)*phi)
+                zdelta_step = z2 - motor0.z_pos
+                motor0.status = True
+                motor0.move(zdelta_step)
+                _ = queues_dict['frame_len'].get()
+                sharpness2  = queues_dict['frame_len'].get(block=True)
+                zdelta_step = z1 - motor0.z_pos
+                if motor0.focus_get == True:
+                    motor0.status = True
+                    motor0.move(zdelta_step)
+                    _ = queues_dict['frame_len'].get()
+                    sharpness1  = queues_dict['frame_len'].get(block=True)
+                    # 根据清晰度动态调整步长和搜索范围
+                    if sharpness1 > sharpness2: #更新右端点
+                        z_max = z2
+                    else: #更新左端点
+                        z_min = z1
+                    iterations += 1
+                # print(z2, sharpness2)
+        motor0.focus, motor0.focus_get = False, False  # 对焦结束
+        send_log_message(f'对焦完成 - 位置: {motor0.z_pos/motor0.steps_per_mm:.3f} mm', 'success')
+        emit('focus_complete', {'status': 'success', 'position': motor0.z_pos/motor0.steps_per_mm})
+    except Exception as e:
+        emit('focus_complete', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('set_led')
+def handle_set_led(data):
+    try:
+        motor0.led_cycle1 = int(data['value'])
+        motor0.set_led_power1()
+        emit('led_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        print(f"LED setting error: {e}")
+        emit('led_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('set_r_bal')
+def handle_set_r_bal(data):
+    try:
+        r_value = float(data['value'])
+        cam0.r_gain = r_value
+        emit('r_bal_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        emit('r_bal_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('set_b_bal')
+def handle_set_b_bal(data):
+    try:
+        b_value = float(data['value'])
+        cam0.b_gain = b_value
+        emit('b_bal_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        emit('b_bal_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('set_recording_delay')
+def handle_set_recording_delay(data):
+    global recording_interval
+    try:
+        recording_interval = float(data['value'])
+        emit('recording_delay_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        emit('recording_delay_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('save_config')
+def handle_save_config():
+    try:
+        settings = {
+            'exposure_value': cam0.exposure_time/1000,
+            'gain_value': cam0.analogue_gain,
+            'led_value': motor0.led_cycle1,
+            'r_value': cam0.r_gain,
+            'b_value': cam0.b_gain,
+            'steps_per_mm': motor0.steps_per_mm,
+        }
+        with open('/home/admin/Documents/project/settings.json', 'w') as f:
+            json.dump(settings, f)
+        emit('config_saved', {'status': 'success', 'message': 'Configuration saved'})
+    except Exception as e:
+        emit('config_saved', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('close')
+def handle_close():
+    global is_veiwing, is_recording, video_writer, is_recording_cam1, video_writer_cam1
+    """用户关闭网页时，停止所有功能"""
+    is_veiwing = False
+    is_recording = False
+    is_recording_cam1 = False
+    if video_writer is not None:
+        video_writer.release()
+    if video_writer_cam1 is not None:
+        video_writer_cam1.release()
+    cam0.__stop__() # 停止摄像头
+    cam1.__stop__() # 停止cam1摄像头
+    motor0.status = False
+    emit('closed', {'status': 'success', 'message': 'System closed'})
+
+
+@socketio.on('delete_video')
+def handle_delete_video(data):
+    try:
+        filename = data.get('filename')
+        if not filename:
+            emit('delete_video_response', {'success': False, 'error': 'No filename provided'})
+            return
+        file_path = os.path.join(SAVE_DIR, filename)
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            emit('delete_video_response', {'success': True, 'message': f'{filename} deleted'})
+        else:
+            emit('delete_video_response', {'success': False, 'error': 'File not found'})
+    except Exception as e:
+        emit('delete_video_response', {'success': False, 'error': str(e)})
+
+
+@socketio.on('get_wifi_status')
+def handle_get_wifi_status():
+    """获取当前WiFi连接状态"""
+    try:
+        import subprocess
+        import re
+        
+        # 获取当前连接的WiFi信息
+        result = subprocess.run(['iwconfig'], capture_output=True, text=True, timeout=10)
+        
+        ssid = None
+        signal = None
+        
+        if result.returncode == 0:
+            # 解析iwconfig输出
+            for line in result.stdout.split('\n'):
+                if 'ESSID:' in line:
+                    essid_match = re.search(r'ESSID:"([^"]*)"', line)
+                    if essid_match:
+                        ssid = essid_match.group(1)
+                elif 'Signal level=' in line:
+                    signal_match = re.search(r'Signal level=(-?\d+)', line)
+                    if signal_match:
+                        signal_dbm = int(signal_match.group(1))
+                        # 转换为百分比 (假设-30dBm为100%, -90dBm为0%)
+                        signal = max(0, min(100, (signal_dbm + 90) * 100 // 60))
+        
+        # 获取WiFi接口的IP地址
+        try:
+            ip_result = subprocess.run(['sudo', 'ip', 'addr', 'show', 'wlan0'], capture_output=True, text=True, timeout=5)
+            ip_address = None
+            if ip_result.returncode == 0:
+                import re
+                # 查找inet地址
+                ip_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', ip_result.stdout)
+                if ip_match:
+                    ip_address = ip_match.group(1)
+        except Exception:
+            ip_address = None
+        
+        emit('wifi_status', {
+            'ssid': ssid,
+            'ip': ip_address,
+            'signal': signal
+        })
+        
+    except Exception as e:
+        print(f"Error getting WiFi status: {e}")
+        emit('wifi_status', {
+            'ssid': None,
+            'ip': None,
+            'signal': None
+        })
+
+
+@socketio.on('scan_wifi')
+def handle_scan_wifi():
+    """扫描可用的WiFi网络"""
+    try:
+        import subprocess
+        import re
+        
+        send_log_message('开始扫描WiFi网络...', 'info')
+        
+        # 使用iwlist扫描WiFi网络
+        result = subprocess.run(['sudo', 'iwlist', 'wlan0', 'scan'], 
+                              capture_output=True, text=True, timeout=30)
+        
+        networks = []
+        
+        if result.returncode == 0:
+            current_network = {}
+            
+            for line in result.stdout.split('\n'):
+                line = line.strip()
+                
+                # 新的网络开始
+                if 'Cell ' in line and 'Address:' in line:
+                    if current_network.get('ssid'):
+                        networks.append(current_network)
+                    current_network = {}
+                
+                # ESSID (网络名称)
+                elif 'ESSID:' in line:
+                    essid_match = re.search(r'ESSID:"([^"]*)"', line)
+                    if essid_match:
+                        current_network['ssid'] = essid_match.group(1)
+                
+                # 信号强度
+                elif 'Signal level=' in line:
+                    signal_match = re.search(r'Signal level=(-?\d+)', line)
+                    if signal_match:
+                        signal_dbm = int(signal_match.group(1))
+                        # 转换为百分比
+                        signal_percent = max(0, min(100, (signal_dbm + 90) * 100 // 60))
+                        current_network['signal'] = signal_percent
+                
+                # 频道
+                elif 'Channel:' in line:
+                    channel_match = re.search(r'Channel:(\d+)', line)
+                    if channel_match:
+                        current_network['channel'] = channel_match.group(1)
+                
+                # 加密类型
+                elif 'Encryption key:' in line:
+                    if 'off' in line:
+                        current_network['security'] = None
+                    else:
+                        current_network['security'] = 'WEP'
+                
+                elif 'IE: IEEE 802.11i/WPA2' in line:
+                    current_network['security'] = 'WPA2'
+                elif 'IE: WPA' in line:
+                    current_network['security'] = 'WPA'
+            
+            # 添加最后一个网络
+            if current_network.get('ssid'):
+                networks.append(current_network)
+        
+        # 过滤掉没有SSID的网络，并按信号强度排序
+        networks = [n for n in networks if n.get('ssid') and n['ssid'].strip()]
+        networks.sort(key=lambda x: x.get('signal', 0), reverse=True)
+        
+        send_log_message(f'WiFi扫描完成，发现 {len(networks)} 个网络', 'success')
+        
+        emit('wifi_scan_result', {
+            'success': True,
+            'networks': networks
+        })
+        
+    except subprocess.TimeoutExpired:
+        send_log_message('WiFi扫描超时', 'error')
+        emit('wifi_scan_result', {
+            'success': False,
+            'error': 'Scan timeout'
+        })
+    except Exception as e:
+        print(f"Error scanning WiFi: {e}")
+        send_log_message(f'WiFi扫描失败: {str(e)}', 'error')
+        emit('wifi_scan_result', {
+            'success': False,
+            'error': str(e)
+        })
+
+
+@socketio.on('connect_wifi')
+def handle_connect_wifi(data):
+    """连接到WiFi网络"""
+    try:
+        ssid = data.get('ssid')
+        password = data.get('password', '')
+        
+        if not ssid:
+            emit('wifi_connect_result', {
+                'success': False,
+                'error': 'SSID is required'
+            })
+            return
+        
+        send_log_message(f'尝试连接到WiFi: {ssid}', 'info')
+        
+        import subprocess
+        import tempfile
+        import os
+        
+        # 创建wpa_supplicant配置
+        if password:
+            password_config = f'psk="{password}"'
+        else:
+            password_config = "key_mgmt=NONE"
+            
+        wpa_config = f"""country=CN
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+
+network={{
+    ssid="{ssid}"
+    {password_config}
+}}
+"""
+        
+        # 写入临时配置文件
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
+            f.write(wpa_config)
+            temp_config_path = f.name
+        
+        try:
+            # 停止当前的wpa_supplicant
+            subprocess.run(['sudo', 'killall', 'wpa_supplicant'], 
+                         capture_output=True, timeout=5)
+            
+            # 启动wpa_supplicant with new config
+            subprocess.run(['sudo', 'wpa_supplicant', '-B', '-i', 'wlan0', 
+                          '-c', temp_config_path], 
+                         capture_output=True, timeout=10)
+            
+            # 等待连接
+            time.sleep(3)
+            
+            # 获取IP地址
+            dhcp_result = subprocess.run(['sudo', 'dhclient', 'wlan0'], 
+                                       capture_output=True, timeout=15)
+            
+            # 验证连接
+            time.sleep(2)
+            ping_result = subprocess.run(['ping', '-c', '1', '8.8.8.8'], 
+                                       capture_output=True, timeout=5)
+            
+            if ping_result.returncode == 0:
+                send_log_message(f'WiFi连接成功: {ssid}', 'success')
+                
+                # 保存配置到系统
+                subprocess.run(['sudo', 'cp', temp_config_path, 
+                              '/etc/wpa_supplicant/wpa_supplicant.conf'], 
+                             capture_output=True)
+                
+                emit('wifi_connect_result', {
+                    'success': True,
+                    'ssid': ssid
+                })
+            else:
+                raise Exception("Network connectivity test failed")
+                
+        finally:
+            # 清理临时文件
+            if os.path.exists(temp_config_path):
+                os.unlink(temp_config_path)
+        
+    except subprocess.TimeoutExpired:
+        send_log_message('WiFi连接超时', 'error')
+        emit('wifi_connect_result', {
+            'success': False,
+            'error': 'Connection timeout'
+        })
+    except Exception as e:
+        print(f"Error connecting to WiFi: {e}")
+        send_log_message(f'WiFi连接失败: {str(e)}', 'error')
+        emit('wifi_connect_result', {
+            'success': False,
+            'error': str(e)
+        })
+
+
+# Keep some REST endpoints for backward compatibility and file serving
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
+@app.route('/video_feed')
+def video_feed():
+    global is_veiwing
+    is_veiwing = True  # 开始视频流
+    return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
+@app.route('/video_feed_cam1')
+def video_feed_cam1():
+    global is_veiwing
+    is_veiwing = True  # 开始视频流
+    return Response(generate_frames_cam1(), mimetype='multipart/x-mixed-replace; boundary=frame')
+
+
+@app.route('/api/settings', methods=['GET'])
+def get_settings():
+    settings = load_settings()
+    return jsonify(settings)
+
+
+# Background thread to send motor position updates
+def send_motor_positions():
+    """Send motor positions every 200ms"""
+    with open('/home/admin/Documents/project/params.json', 'r', encoding='utf-8') as f:
+        data_params = json.load(f)
+        f.close()
+    params_x = data_params['X']
+    params_y = data_params['Y']
+    params_z = data_params['Z']
+    while True:
+        try:
+            # Convert steps to mm (steps_per_mm steps = 1mm)
+            x_pos_mm = motor0.x_pos / motor0.steps_per_mm
+            y_pos_mm = motor0.y_pos / motor0.steps_per_mm
+            z_pos_mm = motor0.z_pos / motor0.steps_per_mm
+            
+            x_vol = round(motor0.measure_voltage('X'),4)
+            y_vol = round(motor0.measure_voltage('Y'),4)
+            z_vol = round(motor0.measure_voltage('Z'),4)
+
+            x_pos_vol_mm = round(arctan_func(x_vol, params_x[0], params_x[1], params_x[2], params_x[3]), 4)
+            y_pos_vol_mm = round(arctan_func(y_vol, params_y[0], params_y[1], params_y[2], params_y[3]), 4)
+            z_pos_vol_mm = round(arctan_func(z_vol, params_z[0], params_z[1], params_z[2], params_z[3]), 4)
+            # print(x_vol, y_vol, z_vol)
+
+            socketio.emit('motor_positions', {
+                'x_pos': round(x_pos_mm, 3),
+                'y_pos': round(y_pos_mm, 3),
+                'z_pos': round(z_pos_mm, 3),
+                'motor_status': motor0.status,  # Add motor status for indicator
+                'x_vol': x_pos_vol_mm,
+                'y_vol': y_pos_vol_mm,
+                'z_vol': z_pos_vol_mm
+            })
+             # 二者定位差距大时，以电压校准为准，因为螺纹会有回程差，只针对运动时的方向，其他方向不控制
+            if abs(x_pos_mm - x_pos_vol_mm) > 0.1 and motor0.direction == 'X':
+                motor0.x_pos = int(x_pos_vol_mm*motor0.steps_per_mm)
+            if abs(y_pos_mm - y_pos_vol_mm) > 0.1 and motor0.direction == 'Y':
+                motor0.y_pos = int(y_pos_vol_mm*motor0.steps_per_mm)
+            if abs(z_pos_mm - z_pos_vol_mm) > 0.1 and motor0.direction == 'Z':
+                motor0.z_pos = int(z_pos_vol_mm*motor0.steps_per_mm)
+
+        except Exception as e:
+            print(f"Error sending motor positions: {e}")
+        # 保存电机位置
+        # save_motor_positions()
+        if motor0.status: #动态时，实时保存
+            time.sleep(0.2)  # 200ms frequency
+        else: #静态时，缓慢保存
+            time.sleep(1)  # 200ms frequency
+            
+            socketio.emit('target_positions_update', {
+                'x_target': round(x_pos_mm, 3),
+                'y_target': round(y_pos_mm, 3),
+                'z_target': round(z_pos_mm, 3)
+            })
+
+
+
+def cleanup_static_files():
+    """清理static文件夹下的缓存文件"""
+    try:
+        static_dir = '/home/admin/Documents/static'
+        if os.path.exists(static_dir):
+            # 删除.avi文件
+            for file in os.listdir(static_dir):
+                if file.endswith('.avi'):
+                    file_path = os.path.join(static_dir, file)
+                    try:
+                        os.remove(file_path)
+                        print(f"已删除缓存视频文件: {file}")
+                    except Exception as e:
+                        print(f"删除视频文件失败 {file}: {e}")
+            
+            # 删除.jpeg文件
+            for file in os.listdir(static_dir):
+                if file.endswith('.jpeg'):
+                    file_path = os.path.join(static_dir, file)
+                    try:
+                        os.remove(file_path)
+                        print(f"已删除缓存图片文件: {file}")
+                    except Exception as e:
+                        print(f"删除图片文件失败 {file}: {e}")
+        
+        print("缓存文件清理完成")
+    except Exception as e:
+        print(f"清理缓存文件时出错: {e}")
+
+
+if __name__ == "__main__":
+    print("Starting Microscope Control System...")
+    
+    # 启动时清理缓存文件
+    cleanup_static_files()
+    
+    # Start motor position update thread
+    motor_position_thread = threading.Thread(target=send_motor_positions, daemon=True)
+    motor_position_thread.start()
+    
+    print("Server starting on http://0.0.0.0:5000")
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)

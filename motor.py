@@ -153,36 +153,14 @@ class motor():
 # motor_move = motor()
 # motor_move.direction = 'Z'
 # i = 0
-# # led_power = [1, 0.3, 0.5, 0.7, 0.8, 0.9]
 
 # while True:
-#     # motor_move.status = True
-#     # motor_move.move(-300)
 #     x_vol = motor_move.measure_voltage('X')
 #     y_vol = motor_move.measure_voltage('Y')
 #     z_vol = motor_move.measure_voltage('Z')
 #     r_vol = motor_move.measure_voltage('R')
 #     print(x_vol, y_vol, z_vol, r_vol)
-#     # motor_move.status = True
-#     # motor_move.move(300)
-#     # print(x_vol, y_vol, z_vol, r_vol)
-#     # motor_move.led_cycle1 = led_power[-int(i%len(led_power))]
-#     # motor_move.set_led1_power()
 #     time.sleep(0.5)
 #     i += 1
 
 
-# step = 128
-# motor_move.status = True
-# motor_move.move(step)
-# time.sleep(0.01)
-# data = []
-# vol = 1.7
-# while 1<vol<1.8:
-#     motor_move.status = True
-#     motor_move.move(step)
-#     time.sleep(0.01)
-#     vol = motor_move.measure_voltage('Z')
-#     data.append([motor_move.z_pos, vol])
-#     print(vol, motor_move.z_pos)
-# np.savetxt('data.txt',data)

@@ -43,6 +43,8 @@ def send_log_message(message, log_type='info'):
 
 cam0 = VideoCamera(Picamera2(1), preview_size=imx477_dict["preview_size"], video_size=imx477_dict["video_size"], image_size=imx477_dict["image_size"], framerate=imx477_dict["frame_rate"])
 cam1 = VideoCamera(Picamera2(0), preview_size=imx219_dict["preview_size"], video_size=imx219_dict["video_size"], image_size=imx219_dict["image_size"], framerate=imx219_dict["frame_rate"])
+cam1.apply_perspective = False
+
 
 motor0 = motor()
 # 控制录像状态
@@ -169,6 +171,7 @@ def record_video():
     while is_recording or not queues_dict['rgb'].empty():
         rgb = queues_dict['rgb'].get()
         bgr = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB, rgb)  # 写入图象时，会替换通道
+
         if i < max_frame:
             if recording_interval > 0 :
                 time.sleep(recording_interval)
@@ -289,8 +292,10 @@ def load_settings():
             cam0.analogue_gain = settings['gain_value']
             cam0.r_gain = settings['r_value']
             cam0.b_gain = settings['b_value']
-            motor0.led_cycle0 = int(settings['led_value'])
+            motor0.led_cycle0 = int(settings.get('led_value_0', 10))
             motor0.set_led_power0()
+            motor0.led_cycle1 = int(settings.get('led_value_1', 10))
+            motor0.set_led_power1()
             # 读取校准的步数值，如果不存在则使用默认值1500
             cam0.pixel_size = settings.get('pixel_size', 0.09)
             print(f"Loaded pixel_size: {cam0.pixel_size}")
@@ -352,6 +357,8 @@ def handle_disconnect():
     motor0.status = False
     motor0.led_cycle0 = 0
     motor0.set_led_power0()
+    motor0.led_cycle1 = 0
+    motor0.set_led_power1()
     emit('closed', {'status': 'success', 'message': 'System closed'})
 
 
@@ -379,6 +386,40 @@ def handle_capture():
     })
 
     cam0.preview_config()
+
+
+@socketio.on('capture_cam1')
+def handle_capture_cam1():
+    try:
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        # 使用cam1进行拍照，与cam0类似的流程
+        rgb = cam1.capture_config()
+        bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+        # 转换为PIL图像并编码
+        pil_image = Image.fromarray(bgr)
+        img_byte_arr = io.BytesIO()
+        pil_image.save(img_byte_arr, format='jpeg')
+        file_data = base64.b64encode(img_byte_arr.getvalue()).decode('utf-8')
+        
+        emit('capture_cam1_response', {
+            'success': True,
+            'filename': f'cam1_{timestamp}.jpeg',
+            'data': file_data
+        })
+        
+        send_log_message(f'辅助摄像头拍照成功: cam1_{timestamp}.jpeg', 'success')
+        
+    except Exception as e:
+        print(f"Cam1 capture error: {e}")
+        send_log_message(f'辅助摄像头拍照失败: {str(e)}', 'error')
+        emit('capture_cam1_response', {
+            'success': False,
+            'error': str(e)
+        })
+    finally:
+        # 恢复cam1的预览模式
+        cam1.exposure_time = 20000
+        cam1.preview_config()
     
 
 
@@ -690,7 +731,8 @@ def handle_calibrate_system():
             settings = {
                 'exposure_value': cam0.exposure_time/1000,
                 'gain_value': cam0.analogue_gain,
-                'led_value': motor0.led_cycle0,
+                'led_value_0': motor0.led_cycle0,
+                'led_value_1': motor0.led_cycle1,
                 'r_value': cam0.r_gain,
                 'b_value': cam0.b_gain,
                 'pixel_size': pixel_size,
@@ -777,25 +819,37 @@ def handle_cell_count():
 
 
 @socketio.on('auto_brightness')
-def handle_auto_brightness():
+def handle_auto_brightness(data):
     try:
+        led_type = data.get('led_type', 0)  # 默认为反射LED (0)
+        led_name = '反射' if led_type == 0 else '透射'
+        
         # 发送开始自动亮度调节的状态
-        emit('auto_brightness_status', {'status': 'started', 'message': '开始自动亮度调节...'})
-        send_log_message('开始自动亮度调节...', 'info')
+        emit('auto_brightness_status', {'status': 'started', 'message': f'开始{led_name}自动亮度调节...'})
+        send_log_message(f'开始{led_name}自动亮度调节...', 'info')
         
         # 保存原始LED设置
-        original_led = motor0.led_cycle0
+        if led_type == 0:
+            original_led = motor0.led_cycle0
+            led_values = list(range(max(0, original_led - 10), min(20, original_led + 11)))
+        else:
+            original_led = motor0.led_cycle1
+            led_values = list(range(max(0, original_led - 10), min(50, original_led + 11)))
         
         # 测试不同LED亮度下的清晰度
-        led_values = list(range(max(0, original_led - 10), min(100, original_led + 11)))
+        
         max_sharpness = 0
         optimal_led = original_led
         sharpness_results = []
         
         for i, led_value in enumerate(led_values):
             # 设置LED亮度
-            motor0.led_cycle0 = led_value
-            motor0.set_led_power0()
+            if led_type == 0:
+                motor0.led_cycle0 = led_value
+                motor0.set_led_power0()
+            else:
+                motor0.led_cycle1 = led_value
+                motor0.set_led_power1()
             time.sleep(0.1)  # 等待LED稳定
             
             # 清空队列中的旧数据
@@ -818,7 +872,8 @@ def handle_auto_brightness():
                     'current': i + 1,
                     'total': len(led_values),
                     'led_value': led_value,
-                    'sharpness': frame_sharpness
+                    'sharpness': frame_sharpness,
+                    'led_type': led_type
                 })
                 
                 # 更新最优值
@@ -826,38 +881,48 @@ def handle_auto_brightness():
                     max_sharpness = frame_sharpness
                     optimal_led = led_value
                 
-                print(f"LED {led_value}: 清晰度 {frame_sharpness}")
-                send_log_message(f'LED {led_value}: 清晰度 {frame_sharpness}', 'debug')
+                print(f"{led_name}LED {led_value}: 清晰度 {frame_sharpness}")
+                send_log_message(f'{led_name}LED {led_value}: 清晰度 {frame_sharpness}', 'debug')
                 
             except Exception as e:
-                print(f"获取清晰度数据失败 LED {led_value}: {e}")
+                print(f"获取清晰度数据失败 {led_name}LED {led_value}: {e}")
                 sharpness_results.append((led_value, 0))
         
         # 设置为最优LED亮度
-        motor0.led_cycle0 = optimal_led
-        motor0.set_led_power0()
+        if led_type == 0:
+            motor0.led_cycle0 = optimal_led
+            motor0.set_led_power0()
+        else:
+            motor0.led_cycle1 = optimal_led
+            motor0.set_led_power1()
         
-        print(f"自动亮度调节完成 - 最佳LED: {optimal_led}, 最大清晰度: {max_sharpness}")
-        send_log_message(f'自动亮度调节完成 - 最佳LED: {optimal_led}, 最大清晰度: {max_sharpness}', 'success')
+        print(f"{led_name}自动亮度调节完成 - 最佳LED: {optimal_led}, 最大清晰度: {max_sharpness}")
+        send_log_message(f'{led_name}自动亮度调节完成 - 最佳LED: {optimal_led}, 最大清晰度: {max_sharpness}', 'success')
         
         emit('auto_brightness_response', {
             'success': True,
             'optimal_led': optimal_led,
             'max_sharpness': max_sharpness,
-            'results': sharpness_results
+            'results': sharpness_results,
+            'led_type': led_type
         })
         
     except Exception as e:
-        print(f"Auto brightness error: {e}")
-        send_log_message(f'自动亮度调节失败: {str(e)}', 'error')
+        print(f"{led_name}Auto brightness error: {e}")
+        send_log_message(f'{led_name}自动亮度调节失败: {str(e)}', 'error')
         
         # 恢复原始LED设置
-        motor0.led_cycle0 = original_led
-        motor0.set_led_power0()
+        if led_type == 0:
+            motor0.led_cycle0 = original_led
+            motor0.set_led_power0()
+        else:
+            motor0.led_cycle1 = original_led
+            motor0.set_led_power1()
         
         emit('auto_brightness_response', {
             'success': False,
-            'error': str(e)
+            'error': str(e),
+            'led_type': led_type
         })
 
 
@@ -1052,15 +1117,26 @@ def handle_fast_focus():
         emit('focus_complete', {'status': 'error', 'message': str(e)})
 
 
-@socketio.on('set_led')
-def handle_set_led(data):
+@socketio.on('set_led_0')
+def handle_set_led_0(data):
     try:
         motor0.led_cycle0 = int(data['value'])
         motor0.set_led_power0()
-        emit('led_set', {'status': 'success', 'value': data['value']})
+        emit('led_0_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
-        print(f"LED setting error: {e}")
-        emit('led_set', {'status': 'error', 'message': str(e)})
+        print(f"LED 0 setting error: {e}")
+        emit('led_0_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('set_led_1')
+def handle_set_led_1(data):
+    try:
+        motor0.led_cycle1 = int(data['value'])
+        motor0.set_led_power1()
+        emit('led_1_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        print(f"LED 1 setting error: {e}")
+        emit('led_1_set', {'status': 'error', 'message': str(e)})
 
 
 @socketio.on('set_r_bal')
@@ -1083,6 +1159,33 @@ def handle_set_b_bal(data):
         emit('b_bal_set', {'status': 'error', 'message': str(e)})
 
 
+@socketio.on('set_cam1_mode')
+def handle_set_cam1_mode(data):
+    try:
+        mode = data.get('mode', 'normal')
+        apply_perspective = data.get('apply_perspective', False)
+        
+        # 设置cam1的透视校正参数
+        cam1.apply_perspective = apply_perspective
+        
+        mode_name = '正常模式' if mode == 'normal' else '校正模式'
+        send_log_message(f'辅助摄像头模式已切换为: {mode_name}', 'info')
+        
+        emit('cam1_mode_response', {
+            'success': True,
+            'mode': mode,
+            'apply_perspective': apply_perspective,
+            'message': f'模式已切换为: {mode_name}'
+        })
+    except Exception as e:
+        print(f"Cam1 mode setting error: {e}")
+        send_log_message(f'辅助摄像头模式切换失败: {str(e)}', 'error')
+        emit('cam1_mode_response', {
+            'success': False,
+            'error': str(e)
+        })
+
+
 @socketio.on('set_recording_delay')
 def handle_set_recording_delay(data):
     global recording_interval
@@ -1099,7 +1202,8 @@ def handle_save_config():
         settings = {
             'exposure_value': cam0.exposure_time/1000,
             'gain_value': cam0.analogue_gain,
-            'led_value': motor0.led_cycle0,
+            'led_value_0': motor0.led_cycle0,
+            'led_value_1': motor0.led_cycle1,
             'r_value': cam0.r_gain,
             'b_value': cam0.b_gain,
             'steps_per_mm': motor0.steps_per_mm,

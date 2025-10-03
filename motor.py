@@ -70,7 +70,12 @@ class motor():
         self.focus_pos = 0
         self.focus_get = False
         self.steps_per_mm = 1450
-        self.step_sign_x, self.step_sign_y, self.step_sign_z = -1, -1, -1
+        
+        # 默认step_sign值
+        self.step_sign_x, self.step_sign_y, self.step_sign_z = -1, -1, 1
+        
+        # 从params.json读取step_sign参数
+        self.load_step_signs()
 
         self.led_cycle0, self.led_cycle1 = 0, 0
         self.pwm0 = HardwarePWM(pwm_channel=0, hz=100, chip=0)  # 0通道对应12，1--13，2--18，3--19
@@ -78,6 +83,41 @@ class motor():
         self.pwm1 = HardwarePWM(pwm_channel=1, hz=100, chip=0)  # 0通道对应12，1--13，2--18，3--19
         self.pwm1.start(self.led_cycle1) # full duty cycle
 
+    def load_step_signs(self):
+        """从params.json文件中读取step_sign参数"""
+        import json
+        import os
+        
+        params_file = '/home/admin/Documents/microscopy/params.json'
+        
+        try:
+            if os.path.exists(params_file):
+                with open(params_file, 'r', encoding='utf-8') as f:
+                    data_params = json.load(f)
+                
+                # 读取step_signs参数
+                if 'step_signs' in data_params:
+                    step_signs = data_params['step_signs']
+                    
+                    if 'X' in step_signs:
+                        self.step_sign_x = step_signs['X']
+                        print(f"Loaded step_sign_x: {self.step_sign_x}")
+                    
+                    if 'Y' in step_signs:
+                        self.step_sign_y = step_signs['Y']
+                        print(f"Loaded step_sign_y: {self.step_sign_y}")
+                    
+                    if 'Z' in step_signs:
+                        self.step_sign_z = step_signs['Z']
+                        print(f"Loaded step_sign_z: {self.step_sign_z}")
+                else:
+                    print("No step_signs found in params.json, using default values")
+            else:
+                print(f"params.json not found at {params_file}, using default step_sign values")
+                
+        except Exception as e:
+            print(f"Error loading step_signs from params.json: {e}")
+            print("Using default step_sign values")
 
     def move(self, step=0):
         IN1, IN2, IN3, IN4 = direction(pos=self.direction)
@@ -145,15 +185,17 @@ class motor():
         self.pwm1.change_duty_cycle(self.led_cycle1)
         self.pwm1.change_frequency(25_000)
 
-# motor_move = motor()
-# motor_move.direction = 'Z'
-# i = 0
 
-# while True:
-#     x_vol = motor_move.measure_voltage('X')
-#     y_vol = motor_move.measure_voltage('Y')
-#     z_vol = motor_move.measure_voltage('Z')
-#     r_vol = motor_move.measure_voltage('R')
-#     print(x_vol, y_vol, z_vol, r_vol)
-#     time.sleep(0.5)
-#     i += 1
+if __name__ == '__main__':
+    motor_move = motor()
+    motor_move.direction = 'Z'
+    i = 0
+
+    while True:
+        x_vol = motor_move.measure_voltage('X')
+        y_vol = motor_move.measure_voltage('Y')
+        z_vol = motor_move.measure_voltage('Z')
+        r_vol = motor_move.measure_voltage('R')
+        print(x_vol, y_vol, z_vol, r_vol)
+        time.sleep(0.5)
+        i += 1

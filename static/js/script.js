@@ -46,6 +46,15 @@ socket.on('video_frame_cam1', function(data) {
     img.src = 'data:image/jpeg;base64,' + data.frame;
 });
 
+// Cam1 mode change handler
+socket.on('cam1_mode_response', function(data) {
+    if (data.success) {
+        addLogMessage(`辅助摄像头模式已切换为: ${data.mode === 'normal' ? '正常模式' : '校正模式'}`, 'success');
+    } else {
+        addLogMessage(`辅助摄像头模式切换失败: ${data.error}`, 'error');
+    }
+});
+
 // Settings update
 socket.on('settings_update', function(settings) {
     console.log('Received settings_update:', settings);
@@ -57,9 +66,13 @@ socket.on('settings_update', function(settings) {
         document.getElementById('gain').value = settings.gain_value;
         document.getElementById('gain_value').textContent = `ISO增益：${settings.gain_value}`;
     }
-    if (settings.led_value !== undefined) {
-        document.getElementById('led').value = settings.led_value;
-        document.getElementById('led_value').textContent = `LED亮度：${settings.led_value}`;
+    if (settings.led_value_0 !== undefined) {
+        document.getElementById('led_0').value = settings.led_value_0;
+        document.getElementById('led_value_0').textContent = `反射亮度：${settings.led_value_0}`;
+    }
+    if (settings.led_value_1 !== undefined) {
+        document.getElementById('led_1').value = settings.led_value_1;
+        document.getElementById('led_value_1').textContent = `透射亮度：${settings.led_value_1}`;
     }
     if (settings.r_value !== undefined) {
         document.getElementById('r_bal').value = settings.r_value;
@@ -99,6 +112,22 @@ socket.on('capture_response', function(data) {
         console.error('Capture failed:', data.error);
         alert('拍照失败: ' + data.error);
         addLogMessage(`拍照失败: ${data.error}`, 'error');
+    }
+});
+
+// Cam1 capture response
+socket.on('capture_cam1_response', function(data) {
+    if (data.success) {
+        // Create download link for captured image
+        const link = document.createElement('a');
+        link.href = 'data:image/jpeg;base64,' + data.data;
+        link.download = data.filename;
+        link.click();
+        addLogMessage(`辅助摄像头拍照成功: ${data.filename}`, 'success');
+    } else {
+        console.error('Cam1 capture failed:', data.error);
+        alert('辅助摄像头拍照失败: ' + data.error);
+        addLogMessage(`辅助摄像头拍照失败: ${data.error}`, 'error');
     }
 });
 
@@ -325,27 +354,34 @@ socket.on('auto_brightness_status', function(data) {
 
 // Auto brightness progress updates
 socket.on('auto_brightness_progress', function(data) {
-    document.getElementById('autoBrightnessBtn').innerHTML = `<i class="fas fa-lightbulb"></i><br>调节中 ${data.current}/${data.total}`;
-    addLogMessage(`自动亮度调节进度: LED=${data.led_value}, 清晰度=${data.sharpness}`, 'debug');
+    const btnId = data.led_type === 0 ? 'autoBrightnessBtn0' : 'autoBrightnessBtn1';
+    const ledName = data.led_type === 0 ? '反射' : '透射';
+    document.getElementById(btnId).innerHTML = `<i class="fas fa-${data.led_type === 0 ? 'lightbulb' : 'sun'}"></i><br>${ledName}调节中 ${data.current}/${data.total}`;
+    addLogMessage(`${ledName}自动亮度调节进度: LED=${data.led_value}, 清晰度=${data.sharpness}`, 'debug');
 });
 
 // Auto brightness response
 socket.on('auto_brightness_response', function(data) {
+    const btnId = data.led_type === 0 ? 'autoBrightnessBtn0' : 'autoBrightnessBtn1';
+    const ledName = data.led_type === 0 ? '反射' : '透射';
+    const ledSliderName = data.led_type === 0 ? 'led_0' : 'led_1';
+    const ledValueName = data.led_type === 0 ? 'led_value_0' : 'led_value_1';
+    
     if (data.success) {
         // Update LED slider to reflect the optimal value
-        document.getElementById('led').value = data.optimal_led;
-        document.getElementById('led_value').textContent = `LED亮度：${data.optimal_led}`;
-        addLogMessage(`自动亮度调节完成！最佳LED亮度: ${data.optimal_led}, 最大清晰度: ${data.max_sharpness}`, 'success');
-        alert(`自动亮度调节完成！\n最佳LED亮度: ${data.optimal_led}\n最大清晰度: ${data.max_sharpness}`);
+        document.getElementById(ledSliderName).value = data.optimal_led;
+        document.getElementById(ledValueName).textContent = `${ledName}亮度：${data.optimal_led}`;
+        addLogMessage(`${ledName}自动亮度调节完成！最佳LED亮度: ${data.optimal_led}, 最大清晰度: ${data.max_sharpness}`, 'success');
+        alert(`${ledName}自动亮度调节完成！\n最佳LED亮度: ${data.optimal_led}\n最大清晰度: ${data.max_sharpness}`);
     } else {
         console.error('Auto brightness failed:', data.error);
-        addLogMessage(`自动亮度调节失败: ${data.error}`, 'error');
-        alert('自动亮度调节失败: ' + data.error);
+        addLogMessage(`${ledName}自动亮度调节失败: ${data.error}`, 'error');
+        alert(`${ledName}自动亮度调节失败: ` + data.error);
     }
     
     // Reset button state
-    document.getElementById('autoBrightnessBtn').innerHTML = '<i class="fas fa-lightbulb"></i><br>自动亮度';
-    document.getElementById('autoBrightnessBtn').disabled = false;
+    document.getElementById(btnId).innerHTML = `<i class="fas fa-${data.led_type === 0 ? 'lightbulb' : 'sun'}"></i><br>${ledName}自动亮度`;
+    document.getElementById(btnId).disabled = false;
 });
 
 // 监听视频删除结果
@@ -485,9 +521,15 @@ socket.on('z_pos_set', function(data) {
     }
 });
 
-socket.on('led_set', function(data) {
+socket.on('led_0_set', function(data) {
     if (data.status === 'error') {
-        console.error('LED set failed:', data.message);
+        console.error('LED 0 set failed:', data.message);
+    }
+});
+
+socket.on('led_1_set', function(data) {
+    if (data.status === 'error') {
+        console.error('LED 1 set failed:', data.message);
     }
 });
 
@@ -544,6 +586,10 @@ function captureScreenshot() {
     socket.emit('capture');
 }
 
+function captureCam1Screenshot() {
+    socket.emit('capture_cam1');
+}
+
 function fast_forcus() {
     socket.emit('fast_focus');
 }
@@ -569,13 +615,15 @@ function cellCount() {
 }
 
 // Auto brightness function
-function autoBrightness() {
-    const btn = document.getElementById('autoBrightnessBtn');
+function autoBrightness(ledType) {
+    const btnId = ledType === 0 ? 'autoBrightnessBtn0' : 'autoBrightnessBtn1';
+    const ledName = ledType === 0 ? '反射' : '透射';
+    const btn = document.getElementById(btnId);
     btn.disabled = true;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i><br>自动调节中...';
     
-    socket.emit('auto_brightness');
-    addLogMessage('开始自动亮度调节...', 'info');
+    socket.emit('auto_brightness', { led_type: ledType });
+    addLogMessage(`开始${ledName}自动亮度调节...`, 'info');
 }
 
 // 日志管理函数
@@ -630,7 +678,8 @@ function updateValueAndSend(slider, valueElement, eventName, unit) {
     const labelMap = {
         'set_exposure': '曝光时间',
         'set_gain': 'ISO增益',
-        'set_led': 'LED亮度',
+        'set_led_0': '反射亮度',
+        'set_led_1': '透射亮度',
         'set_x_pos': 'X目标位置',
         'set_y_pos': 'Y目标位置',
         'set_z_pos': 'Z目标位置',
@@ -679,7 +728,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const exposureSlider = document.getElementById('exposure');
     const gainSlider = document.getElementById('gain');
-    const ledSlider = document.getElementById('led');
+    const led0Slider = document.getElementById('led_0');
+    const led1Slider = document.getElementById('led_1');
 
     const rSlider = document.getElementById('r_bal');
     const bSlider = document.getElementById('b_bal');
@@ -692,7 +742,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     const exposureValue = document.getElementById('exposure_value');
     const gainValue = document.getElementById('gain_value');
-    const ledValue = document.getElementById('led_value');
+    const led0Value = document.getElementById('led_value_0');
+    const led1Value = document.getElementById('led_value_1');
 
     const rValue = document.getElementById('r_value');
     const bValue = document.getElementById('b_value');
@@ -716,8 +767,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (gainSlider && gainValue) {
         gainSlider.addEventListener('input', () => updateValueAndSend(gainSlider, gainValue, 'set_gain', ''));
     }
-    if (ledSlider && ledValue) {
-        ledSlider.addEventListener('input', () => updateValueAndSend(ledSlider, ledValue, 'set_led', ''));
+    if (led0Slider && led0Value) {
+        led0Slider.addEventListener('input', () => updateValueAndSend(led0Slider, led0Value, 'set_led_0', ''));
+    }
+    if (led1Slider && led1Value) {
+        led1Slider.addEventListener('input', () => updateValueAndSend(led1Slider, led1Value, 'set_led_1', ''));
     }
 
     if (rSlider && rValue) {
@@ -1045,6 +1099,7 @@ socket.on('wifi_connect_result', function(data) {
 window.onclick = function(event) {
     const wifiModal = document.getElementById('wifiModal');
     const connectModal = document.getElementById('wifiConnectModal');
+    const updateModal = document.getElementById('updateModal');
     
     if (event.target === wifiModal) {
         closeWifiModal();
@@ -1052,4 +1107,315 @@ window.onclick = function(event) {
     if (event.target === connectModal) {
         closeWifiConnectModal();
     }
+    if (event.target === updateModal) {
+        closeUpdateModal();
+    }
 }
+
+// 系统更新功能
+function openUpdateModal() {
+    document.getElementById('updateModal').style.display = 'block';
+    // 自动检查更新
+    checkForUpdates();
+}
+
+function closeUpdateModal() {
+    document.getElementById('updateModal').style.display = 'none';
+    // 重置界面状态
+    resetUpdateUI();
+}
+
+function resetUpdateUI() {
+    document.getElementById('updateProgress').style.display = 'none';
+    document.getElementById('updateResult').style.display = 'none';
+    document.getElementById('performUpdateBtn').disabled = true;
+    document.getElementById('checkUpdateBtn').disabled = false;
+    document.getElementById('progressFill').style.width = '0%';
+}
+
+function checkForUpdates() {
+    const checkBtn = document.getElementById('checkUpdateBtn');
+    const performBtn = document.getElementById('performUpdateBtn');
+    
+    checkBtn.disabled = true;
+    checkBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 检查中...';
+    
+    // 重置版本信息显示
+    document.getElementById('currentVersion').textContent = '检查中...';
+    document.getElementById('latestVersion').textContent = '检查中...';
+    document.getElementById('updateDate').textContent = '-';
+    document.getElementById('updateMessage').textContent = '-';
+    
+    socket.emit('check_update');
+}
+
+function performUpdate() {
+    const performBtn = document.getElementById('performUpdateBtn');
+    const checkBtn = document.getElementById('checkUpdateBtn');
+    
+    // 确认更新
+    if (!confirm('系统更新将会重启服务，确定要继续吗？')) {
+        return;
+    }
+    
+    performBtn.disabled = true;
+    checkBtn.disabled = true;
+    performBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 更新中...';
+    
+    // 显示进度条
+    document.getElementById('updateProgress').style.display = 'block';
+    document.getElementById('updateResult').style.display = 'none';
+    
+    // 开始更新
+    socket.emit('system_update', {
+        github_url: 'https://github.com/ctouchair/microscopy.git',
+        branch: 'main'
+    });
+}
+
+function updateProgressBar(percentage) {
+    document.getElementById('progressFill').style.width = percentage + '%';
+}
+
+function showUpdateStatus(status, message) {
+    document.getElementById('updateStatusText').textContent = message;
+    
+    // 根据状态更新进度条
+    const progressMap = {
+        'started': 10,
+        'downloading': 30,
+        'updating': 60,
+        'restarting': 90,
+        'completed': 100
+    };
+    
+    if (progressMap[status]) {
+        updateProgressBar(progressMap[status]);
+    }
+}
+
+function showUpdateResult(result) {
+    const resultDiv = document.getElementById('updateResult');
+    const contentDiv = document.getElementById('updateResultContent');
+    
+    resultDiv.style.display = 'block';
+    resultDiv.className = 'update-result ' + (result.success ? 'success' : 'error');
+    
+    if (result.success) {
+        contentDiv.innerHTML = `
+            <h4><i class="fas fa-check-circle"></i> 更新成功！</h4>
+            <p>${result.message}</p>
+            <p>系统将在几秒后自动刷新页面...</p>
+        `;
+        
+        // 3秒后刷新页面
+        setTimeout(() => {
+            window.location.reload();
+        }, 3000);
+    } else {
+        contentDiv.innerHTML = `
+            <h4><i class="fas fa-exclamation-circle"></i> 更新失败</h4>
+            <p>错误信息: ${result.error}</p>
+            <p>请检查网络连接或联系管理员。</p>
+        `;
+        
+        // 重新启用按钮
+        document.getElementById('checkUpdateBtn').disabled = false;
+        document.getElementById('checkUpdateBtn').innerHTML = '<i class="fas fa-search"></i> 检查更新';
+        document.getElementById('performUpdateBtn').disabled = false;
+        document.getElementById('performUpdateBtn').innerHTML = '<i class="fas fa-download"></i> 开始更新';
+    }
+}
+
+// SocketIO 事件监听 - 系统更新相关
+socket.on('update_check_result', function(data) {
+    const checkBtn = document.getElementById('checkUpdateBtn');
+    const performBtn = document.getElementById('performUpdateBtn');
+    
+    checkBtn.disabled = false;
+    checkBtn.innerHTML = '<i class="fas fa-search"></i> 检查更新';
+    
+    if (data.success) {
+        // 显示版本信息
+        document.getElementById('currentVersion').textContent = data.current_version;
+        document.getElementById('currentVersion').className = 'version-value current-version';
+        
+        if (data.has_update) {
+            document.getElementById('latestVersion').textContent = data.latest_version.hash;
+            document.getElementById('latestVersion').className = 'version-value new-version';
+            document.getElementById('updateDate').textContent = data.latest_version.date;
+            document.getElementById('updateMessage').textContent = data.latest_version.message;
+            
+            performBtn.disabled = false;
+            addLogMessage(`发现新版本: ${data.latest_version.hash}`, 'info');
+        } else {
+            document.getElementById('latestVersion').textContent = '已是最新版本';
+            document.getElementById('latestVersion').className = 'version-value up-to-date';
+            document.getElementById('updateDate').textContent = '-';
+            document.getElementById('updateMessage').textContent = '系统已是最新版本';
+            
+            performBtn.disabled = true;
+            addLogMessage('系统已是最新版本', 'success');
+        }
+    } else {
+        document.getElementById('currentVersion').textContent = '检查失败';
+        document.getElementById('latestVersion').textContent = '检查失败';
+        document.getElementById('updateDate').textContent = '-';
+        document.getElementById('updateMessage').textContent = data.error || '检查更新失败';
+        
+        addLogMessage(`检查更新失败: ${data.error}`, 'error');
+    }
+});
+
+socket.on('update_status', function(data) {
+    showUpdateStatus(data.status, data.message);
+    addLogMessage(data.message, 'info');
+});
+
+socket.on('update_result', function(data) {
+    showUpdateResult(data);
+    
+    // 隐藏进度条
+    document.getElementById('updateProgress').style.display = 'none';
+    
+    if (data.success) {
+        addLogMessage(data.message, 'success');
+    } else {
+        addLogMessage(`更新失败: ${data.error}`, 'error');
+    }
+});
+
+// 处理系统重启通知
+socket.on('system_restart_required', function(data) {
+    addLogMessage(data.message, 'success');
+    
+    // 显示重启倒计时
+    showRestartCountdown(data.restart_delay || 5);
+    
+    // 设置自动刷新
+    setTimeout(function() {
+        // 先显示重启中的状态
+        showUpdateStatus('restarting', '服务重启中，正在重新连接...');
+        
+        // 等待服务重启完成后刷新页面
+        setTimeout(function() {
+            window.location.reload();
+        }, 3000); // 等待3秒后刷新
+    }, (data.restart_delay || 5) * 1000);
+});
+
+// 显示重启倒计时
+function showRestartCountdown(seconds) {
+    const updateProgress = document.getElementById('updateProgress');
+    const updateResult = document.getElementById('updateResult');
+    const statusText = document.getElementById('updateStatusText');
+    const progressFill = document.getElementById('progressFill');
+    
+    updateProgress.style.display = 'block';
+    updateResult.style.display = 'none';
+    
+    let remainingSeconds = seconds;
+    
+    const countdownInterval = setInterval(function() {
+        statusText.textContent = `服务将在 ${remainingSeconds} 秒后重启，页面将自动刷新...`;
+        
+        // 更新进度条
+        const progress = ((seconds - remainingSeconds) / seconds) * 100;
+        progressFill.style.width = progress + '%';
+        
+        remainingSeconds--;
+        
+        if (remainingSeconds < 0) {
+            clearInterval(countdownInterval);
+            statusText.textContent = '服务重启中，正在重新连接...';
+            progressFill.style.width = '100%';
+        }
+    }, 1000);
+}
+
+// 监听连接断开事件，用于检测服务重启
+socket.on('disconnect', function() {
+    // 如果是在更新过程中断开连接，可能是服务重启
+    const updateProgress = document.getElementById('updateProgress');
+    if (updateProgress.style.display !== 'none') {
+        addLogMessage('连接断开，服务可能正在重启...', 'warning');
+        
+        // 尝试重新连接
+        setTimeout(function() {
+            if (!socket.connected) {
+                addLogMessage('正在尝试重新连接...', 'info');
+                window.location.reload();
+            }
+        }, 5000);
+    }
+});
+
+// 监听重新连接事件
+socket.on('connect', function() {
+    const updateProgress = document.getElementById('updateProgress');
+    if (updateProgress.style.display !== 'none') {
+        addLogMessage('服务重启完成，连接已恢复', 'success');
+        
+        // 隐藏更新进度
+        setTimeout(function() {
+            updateProgress.style.display = 'none';
+            closeUpdateModal();
+        }, 2000);
+    }
+});
+
+// 添加页面可见性检测，确保在页面重新获得焦点时检查连接状态
+document.addEventListener('visibilitychange', function() {
+    if (!document.hidden && !socket.connected) {
+        // 页面变为可见且连接断开时，尝试重新连接
+        addLogMessage('检测到连接断开，正在尝试重新连接...', 'warning');
+        setTimeout(function() {
+            if (!socket.connected) {
+                window.location.reload();
+            }
+        }, 2000);
+    }
+});
+
+// 添加网络状态检测
+window.addEventListener('online', function() {
+    if (!socket.connected) {
+        addLogMessage('网络连接已恢复，正在重新连接服务...', 'info');
+        setTimeout(function() {
+            if (!socket.connected) {
+                window.location.reload();
+            }
+        }, 1000);
+    }
+});
+
+window.addEventListener('offline', function() {
+    addLogMessage('网络连接断开', 'warning');
+});
+
+// Cam1 mode switching functionality
+function initCam1ModeSelector() {
+    const modeRadios = document.querySelectorAll('input[name="cam1Mode"]');
+    
+    modeRadios.forEach(radio => {
+        radio.addEventListener('change', function() {
+            if (this.checked) {
+                const mode = this.value;
+                const applyPerspective = mode === 'corrected';
+                
+                // Send mode change to server
+                socket.emit('set_cam1_mode', {
+                    mode: mode,
+                    apply_perspective: applyPerspective
+                });
+                
+                addLogMessage(`正在切换辅助摄像头模式为: ${mode === 'normal' ? '正常模式' : '校正模式'}`, 'info');
+            }
+        });
+    });
+}
+
+// Initialize cam1 mode selector when page loads
+document.addEventListener('DOMContentLoaded', function() {
+    initCam1ModeSelector();
+});

@@ -4,6 +4,7 @@ import io
 from picamera2 import Picamera2
 import numpy as np
 import time
+from utils import load_fused_perspective_transform
 
 
 class VideoCamera(object):
@@ -17,6 +18,8 @@ class VideoCamera(object):
         self.r_gain, self.b_gain = 1, 1
         self.framerate = framerate
         self.pixel_size = 0.09 #um
+        self.cam1_params, self.cam1_output_size = load_fused_perspective_transform('/home/admin/Documents/microscopy/fused_perspective_transform_params.json')
+        self.apply_perspective = False
 
 
     def __stop__(self):
@@ -59,6 +62,9 @@ class VideoCamera(object):
         self.picam2.configure(capture_config)
         self.picam2.start()
         rgb = self.picam2.capture_array()
+        if self.apply_perspective:
+            rgb = cv2.warpPerspective(rgb, self.cam1_params, self.cam1_output_size)
+            rgb = rgb[1000:, 800:2700]
         return rgb
 
 
@@ -91,11 +97,12 @@ class VideoCamera(object):
             controls.FrameDurationLimits = (frame_duration, frame_duration)  # 固定为self.framerate
 
 
-    def get_frame(self, awb=True, flip=False, to_bgr=False):
+    def get_frame(self, awb=True, flip=False, to_bgr=False, ):
         """
         用于产生视频预览和保存的图像
         """
         rgb = self.picam2.capture_array()
+
         if awb:
             rgb[:,:,0] = rgb[:,:,0] * self.r_gain  # 调整红色
             rgb[:,:,2] = rgb[:,:,2] * self.b_gain  # 调整绿色
@@ -103,10 +110,19 @@ class VideoCamera(object):
             rgb = cv2.flip(rgb, 1)  # 0，上下翻转，1，水平翻转，-1，对角翻转
         if to_bgr:
             rgb = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB, rgb)  # 写入图象时，会替换通道
-        if rgb.shape[0] > self.preview_size[0]:  #默认是video_size采集图像
+        #TO-DO提升性能，输入为低分辨率，同时输出低分辨率
+        if self.apply_perspective:
+            rgb = cv2.resize(rgb, self.image_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
+            rgb = cv2.warpPerspective(rgb, self.cam1_params, self.cam1_output_size)
+            rgb = rgb[1000:, 800:2700]
             rgb_preview = cv2.resize(rgb, self.preview_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
+            # TO-DO视频录制失败
         else:
-            rgb_preview = rgb
+            if rgb.shape[0] > self.preview_size[0]:  #默认是video_size采集图像
+                rgb_preview = cv2.resize(rgb, self.preview_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
+            else:
+                rgb_preview = rgb
+
         #PIL编码
         pil_image = Image.fromarray(rgb_preview)
         # 使用Pillow进行编码

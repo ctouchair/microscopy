@@ -1,7 +1,7 @@
 import cv2
 import os
 import numpy as np
-
+import json
 
 def stitch_images(images):
     """
@@ -205,8 +205,8 @@ def align_images(images):
 def doLap(image):
 
     # YOU SHOULD TUNE THESE VALUES TO SUIT YOUR NEEDS
-    kernel_size = 25         # Size of the laplacian window
-    blur_size = 5           # How big of a kernal to use for the gaussian blur
+    kernel_size = 31         # Size of the laplacian window - 增大窗口面积以获得更好的焦点检测
+    blur_size = 7           # How big of a kernal to use for the gaussian blur
                             # Generally, keeping these two values the same or very close works well
                             # Also, odd numbers, please...
 
@@ -311,3 +311,29 @@ def count_cells(image, pixel_size=0.09):
         cv2.putText(annotated_image, "No cells detected", (10, 30), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
         return annotated_image, 0, 0.0
+
+
+def load_fused_perspective_transform(fused_params_json_path='fused_perspective_transform_params.json'):
+    """
+    使用融合后的单一透视变换矩阵对图像进行变换
+    
+    Args:
+        image_path: 输入图像路径
+        fused_params_json_path: 融合参数文件路径
+    """
+    # 加载融合参数
+    try:
+        with open(fused_params_json_path, 'r', encoding='utf-8') as f:
+            params = json.load(f)
+        print(f"✓ 成功加载融合透视变换参数: {fused_params_json_path}")
+    except FileNotFoundError:
+        print(f"错误: 找不到融合参数文件 {fused_params_json_path}")
+        return None
+    except Exception as e:
+        print(f"错误: 加载融合参数文件失败 - {e}")
+        return None
+
+    fused_params = params['fused_perspective_transform']
+    fused_matrix = np.array(fused_params['perspective_matrix'], dtype=np.float32)
+    output_size = tuple(fused_params['output_size'])
+    return fused_matrix, output_size

@@ -1,5 +1,5 @@
 html, body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Helvetica Neue', Helvetica, Arial, sans-serif;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -7,8 +7,10 @@ html, body {
     margin: 0;
     padding: 0;
     overflow-y: auto;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: linear-gradient(180deg, #f8f9fa 0%, #e9ecef 100%);
+    background-attachment: fixed;
     min-height: 100vh;
+    color: #1d1d1f;
 }
 
 .container {
@@ -45,12 +47,12 @@ html, body {
     flex-direction: column;
     align-items: center;
     margin-bottom: 20px;
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(20px);
     border-radius: 20px;
-    padding: 20px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    padding: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .preview-cam1 {
@@ -59,12 +61,73 @@ html, body {
     flex-direction: column;
     align-items: center;
     margin-bottom: 20px;
-    background: rgba(255, 255, 255, 0.1);
-    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.8);
+    backdrop-filter: blur(20px);
     border-radius: 20px;
-    padding: 20px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+    padding: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.cam1-header {
+    width: 100%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    margin-bottom: 15px;
+    position: relative;
+}
+
+.cam1-header h3 {
+    margin: 0;
+    font-size: 1.1em;
+    color: #1d1d1f;
+}
+
+.cam1-mode-selector {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    gap: 10px;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 8px;
+    padding: 4px;
+}
+
+.mode-option {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: 6px;
+    transition: all 0.2s ease;
+    font-size: 0.9em;
+}
+
+.mode-option:hover {
+    background: rgba(0, 0, 0, 0.1);
+}
+
+.mode-option input[type="radio"] {
+    margin: 0;
+    margin-right: 6px;
+    accent-color: #007AFF;
+}
+
+.mode-option input[type="radio"]:checked + .mode-label {
+    color: #007AFF;
+    font-weight: 600;
+}
+
+.mode-option:has(input[type="radio"]:checked) {
+    background: rgba(0, 122, 255, 0.1);
+}
+
+.mode-label {
+    color: #666;
+    transition: color 0.2s ease;
 }
 
 #videoFeed, #videoCanvas {
@@ -115,53 +178,53 @@ html, body {
     margin-left: 30px;
     margin-top: 0;
     box-sizing: border-box;
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(20px);
-    border-radius: 25px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-    padding: 30px 30px 25px 30px;
-    transition: all 0.3s ease;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(30px);
+    border-radius: 20px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+    padding: 32px 28px 28px 28px;
+    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.4);
     display: flex;
     flex-direction: column;
 }
 
 .controls:hover {
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
-    transform: translateY(-5px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+    transform: translateY(-2px);
 }
 
 .button-row {
     display: flex;
     justify-content: space-between;
     width: 100%;
-    margin-bottom: 15px;
+    margin-bottom: 10px;
     box-sizing: border-box;
 }
 
 .btn {
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    padding: 12px 15px;
-    margin: 5px;
+    background: #007AFF;
+    padding: 6px 12px;
+    margin: 4px;
     cursor: pointer;
     width: 150px;
-    height: 60px;
-    border-radius: 25px;
+    height: 50px;
+    border-radius: 10px;
     flex-direction: row;
     border: none;
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
-    transition: all 0.3s ease;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    box-shadow: 0 3px 12px rgba(0, 122, 255, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
     color: white;
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
     position: relative;
     overflow: hidden;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    line-height: 1.2;
+    line-height: 1.3;
+    letter-spacing: -0.01em;
 }
 
 .btn i {
@@ -189,46 +252,33 @@ html, body {
     left: 100%;
 }
 
-/* 拍照按钮 - 绿色系 */
-#capture {
-    background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+/* 绿色 - 拍照和图像处理类按钮 */
+#capture, #captureCam1Btn, #stitch_images, #focus_stack, #cell_count, #calibrate {
+    background: #34C759;
+    box-shadow: 0 4px 16px rgba(52, 199, 89, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-#capture:hover {
-    background: linear-gradient(135deg, #45a049 0%, #388e3c 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(76, 175, 80, 0.4);
+#capture:hover, #captureCam1Btn:hover, #stitch_images:hover, #focus_stack:hover, #cell_count:hover, #calibrate:hover {
+    background: #30D158;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(52, 199, 89, 0.32), 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
-/* 录制按钮 - 红色系 */
-#recordBtn {
-    background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
+/* 红色 - 录制类按钮 */
+#recordBtn, #recordCam1Btn {
+    background: #FF3B30;
+    box-shadow: 0 4px 16px rgba(255, 59, 48, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-#recordBtn:hover {
-    background: linear-gradient(135deg, #d32f2f 0%, #b71c1c 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(244, 67, 54, 0.4);
+#recordBtn:hover, #recordCam1Btn:hover {
+    background: #FF453A;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(255, 59, 48, 0.32), 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
-#recordBtn.recording {
-    background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
-    animation: pulse 2s infinite;
-}
-
-/* 辅助摄像头录制按钮 - 绿色系 */
-#recordCam1Btn {
-    background: linear-gradient(135deg, #4CAF50 0%, #388E3C 100%);
-}
-
-#recordCam1Btn:hover {
-    background: linear-gradient(135deg, #388E3C 0%, #2E7D32 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(76, 175, 80, 0.4);
-}
-
-#recordCam1Btn.recording {
-    background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%);
+#recordBtn.recording, #recordCam1Btn.recording {
+    background: #FF9500;
+    box-shadow: 0 4px 16px rgba(255, 149, 0, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
     animation: pulse 2s infinite;
 }
 
@@ -370,115 +420,53 @@ html, body {
 
 
 
-/* 快速对焦按钮 - 蓝色系 */
-#fast_focus {
-    background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+/* 蓝色 - 控制和设置类按钮 */
+#fast_focus, #save_config, #autoBrightnessBtn0, #autoBrightnessBtn1 {
+    background: #007AFF;
+    box-shadow: 0 4px 16px rgba(0, 122, 255, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
-#fast_focus:hover {
-    background: linear-gradient(135deg, #1976D2 0%, #1565C0 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(33, 150, 243, 0.4);
+#fast_focus:hover, #save_config:hover, #autoBrightnessBtn0:hover, #autoBrightnessBtn1:hover {
+    background: #0984FF;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(0, 122, 255, 0.32), 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
-/* 保存设置按钮 - 橙色系 */
-#save_config {
-    background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
+/* 自动亮度按钮特殊处理 - 保持蓝色但文字颜色调整 */
+#autoBrightnessBtn0 {
+    color: white;
 }
 
-#save_config:hover {
-    background: linear-gradient(135deg, #F57C00 0%, #E65100 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(255, 152, 0, 0.4);
-}
-
-/* 图像拼接按钮 - 紫色系 */
-#stitch_images {
-    background: linear-gradient(135deg, #9c27b0 0%, #7b1fa2 100%);
-}
-
-#stitch_images:hover {
-    background: linear-gradient(135deg, #7b1fa2 0%, #6a1b9a 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(156, 39, 176, 0.4);
-}
-
-#stitch_images:disabled {
-    background: linear-gradient(135deg, #9e9e9e 0%, #757575 100%);
-    color: #e0e0e0;
+/* 绿色按钮的禁用状态 */
+#stitch_images:disabled, #focus_stack:disabled, #cell_count:disabled {
+    background: #8E8E93;
+    color: rgba(255, 255, 255, 0.6);
     cursor: not-allowed;
     transform: none;
+    box-shadow: 0 2px 8px rgba(142, 142, 147, 0.16), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
-#stitch_images:disabled:hover {
-    background: linear-gradient(135deg, #9e9e9e 0%, #757575 100%);
+#stitch_images:disabled:hover, #focus_stack:disabled:hover, #cell_count:disabled:hover {
+    background: #8E8E93;
     transform: none;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-}
-
-/* 景深堆叠按钮 - 青色系 */
-#focus_stack {
-    background: linear-gradient(135deg, #00bcd4 0%, #0097a7 100%);
-}
-
-#focus_stack:hover {
-    background: linear-gradient(135deg, #0097a7 0%, #00838f 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(0, 188, 212, 0.4);
-}
-
-#focus_stack:disabled {
-    background: linear-gradient(135deg, #9e9e9e 0%, #757575 100%);
-    color: #e0e0e0;
-    cursor: not-allowed;
-    transform: none;
-}
-
-#focus_stack:disabled:hover {
-    background: linear-gradient(135deg, #9e9e9e 0%, #757575 100%);
-    transform: none;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-}
-
-/* 细胞计数按钮 - 深绿色系 */
-#cell_count {
-    background: linear-gradient(135deg, #388e3c 0%, #2e7d32 100%);
-}
-
-#cell_count:hover {
-    background: linear-gradient(135deg, #2e7d32 0%, #1b5e20 100%);
-    transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(56, 142, 60, 0.4);
-}
-
-#cell_count:disabled {
-    background: linear-gradient(135deg, #9e9e9e 0%, #757575 100%);
-    color: #e0e0e0;
-    cursor: not-allowed;
-    transform: none;
-}
-
-#cell_count:disabled:hover {
-    background: linear-gradient(135deg, #9e9e9e 0%, #757575 100%);
-    transform: none;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 8px rgba(142, 142, 147, 0.16), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 
 
 .btn:hover {
-    transform: translateY(-3px);
-    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(0, 122, 255, 0.32), 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
 .btn:active {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    transform: translateY(0px);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .btn:focus {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(79, 195, 247, 0.5);
+    box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2);
 }
 
 /* 录制按钮的脉冲动画 */
@@ -515,13 +503,13 @@ html, body {
 
 input[type="range"] {
     padding: 0px;
-    margin: 8px 0px;
+    margin: 10px 0px;
     width: 300px;
-    height: 8px;
-    border-radius: 10px;
-    transition: all 0.3s ease;
+    height: 4px;
+    border-radius: 2px;
+    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
     cursor: pointer;
-    background: linear-gradient(to right, #e0e0e0, #e0e0e0);
+    background: #E5E5EA;
     outline: none;
     -webkit-appearance: none;
 }
@@ -529,28 +517,29 @@ input[type="range"] {
 input[type="range"]::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #007AFF;
     cursor: pointer;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
-    transition: all 0.3s ease;
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
+    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    border: 3px solid #ffffff;
 }
 
 input[type="range"]::-webkit-slider-thumb:hover {
-    transform: scale(1.2);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+    transform: scale(1.1);
+    box-shadow: 0 4px 16px rgba(0, 122, 255, 0.32), 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
 input[type="range"]::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
+    width: 24px;
+    height: 24px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    background: #007AFF;
     cursor: pointer;
-    border: none;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    border: 3px solid #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 input[type="range"]:hover {
@@ -573,20 +562,22 @@ input[type="range"]:focus {
 }
 
 .slider-value {
-    padding: 6px 8px;
+    padding: 8px 12px;
     width: 140px;
-    height: 15px;
+    height: 16px;
     pointer-events: none;
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 500;
-    color: #333;
-    background: rgba(255, 255, 255, 0.8);
-    border-radius: 10px;
+    color: #1d1d1f;
+    background: rgba(255, 255, 255, 0.9);
+    border-radius: 8px;
     text-align: center;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    letter-spacing: -0.01em;
+    border: 1px solid rgba(0, 0, 0, 0.04);
 }
 
 .slider-group .slider-value {
@@ -637,31 +628,32 @@ input[type="range"]:focus {
 }
 
 .current-position {
-    padding: 6px 8px;
+    padding: 8px 12px;
     width: 140px;
-    height: 15px;
+    height: 16px;
     pointer-events: none;
-    color: #1976d2;
+    color: #007AFF;
     font-weight: 600;
-    font-size: 12px;
+    font-size: 13px;
     text-align: right;
-    background: rgba(25, 118, 210, 0.1);
-    border-radius: 10px;
-    border-left: 3px solid #1976d2;
+    background: rgba(0, 122, 255, 0.08);
+    border-radius: 8px;
+    border-left: 3px solid #007AFF;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    letter-spacing: -0.01em;
 }
 
 .indicator {
     width: 135px;
-    height: 35px;
-    padding: 10px;
-    margin: 5px;
+    height: 40px;
+    padding: 12px;
+    margin: 6px;
     cursor: pointer;
-    border-radius: 25px;
-    background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
-    transition: all 0.3s ease;
+    border-radius: 20px;
+    background: #34C759;
+    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
     flex-direction: row;
     display: flex;
     align-items: center;
@@ -672,37 +664,37 @@ input[type="range"]:focus {
     text-align: center;
     user-select: none;
     border: none;
-    box-shadow: 0 4px 15px rgba(76, 175, 80, 0.3);
-    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 4px 16px rgba(52, 199, 89, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
+    letter-spacing: -0.01em;
     position: relative;
 }
 
 .indicator.moving {
-    background: linear-gradient(135deg, #f44336 0%, #d32f2f 100%);
-    box-shadow: 0 4px 15px rgba(244, 67, 54, 0.3);
+    background: #FF3B30;
+    box-shadow: 0 4px 16px rgba(255, 59, 48, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
     animation: stop-pulse 1.5s infinite;
     cursor: pointer;
 }
 
 .indicator.moving:hover {
-    background: linear-gradient(135deg, #e53935 0%, #c62828 100%);
-    box-shadow: 0 6px 20px rgba(244, 67, 54, 0.4);
-    transform: translateY(-2px);
+    background: #FF453A;
+    box-shadow: 0 8px 24px rgba(255, 59, 48, 0.32), 0 2px 6px rgba(0, 0, 0, 0.06);
+    transform: translateY(-1px);
 }
 
 .indicator:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(52, 199, 89, 0.32), 0 2px 6px rgba(0, 0, 0, 0.06);
 }
 
 .indicator:active {
     transform: translateY(0);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 2px 8px rgba(52, 199, 89, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
 }
 
 .indicator:focus {
     outline: none;
-    box-shadow: 0 0 0 3px rgba(79, 195, 247, 0.5);
+    box-shadow: 0 0 0 4px rgba(52, 199, 89, 0.2);
 }
 
 .indicator-full-width {
@@ -712,25 +704,25 @@ input[type="range"]:focus {
 }
 
 .chart-container {
-    background: rgba(255, 255, 255, 0.95);
-    backdrop-filter: blur(20px);
-    border-radius: 25px;
-    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-    padding: 25px 20px 20px 20px;
-    margin-top: 30px;
-    margin-bottom: 20px;
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(30px);
+    border-radius: 20px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.04);
+    padding: 28px 24px 24px 24px;
+    margin-top: 32px;
+    margin-bottom: 24px;
     display: flex;
     justify-content: center;
     max-width: 1200px;
     width: 100%;
-    margin: 30px auto 0 auto;
-    transition: all 0.3s ease;
-    border: 1px solid rgba(255, 255, 255, 0.3);
+    margin: 32px auto 0 auto;
+    transition: all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+    border: 1px solid rgba(255, 255, 255, 0.4);
 }
 
 .chart-container:hover {
-    box-shadow: 0 25px 50px rgba(0, 0, 0, 0.15);
-    transform: translateY(-3px);
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.12), 0 2px 6px rgba(0, 0, 0, 0.06);
+    transform: translateY(-2px);
 }
 
 #mainChart {
@@ -786,10 +778,11 @@ input[type="range"]:focus {
 
 .controls-header h2 {
     margin: 0;
-    color: #333;
-    font-size: 24px;
+    color: #1d1d1f;
+    font-size: 28px;
     font-weight: 700;
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    letter-spacing: -0.02em;
+    line-height: 1.1;
 }
 
 .controls-header i {
@@ -798,35 +791,37 @@ input[type="range"]:focus {
 }
 
 .control-section {
-    margin-bottom: 25px;
-    padding: 20px;
-    background: rgba(255, 255, 255, 0.5);
-    border-radius: 15px;
-    border: 1px solid rgba(102, 126, 234, 0.1);
+    margin-bottom: 18px;
+    padding: 16px;
+    background: rgba(255, 255, 255, 0.6);
+    border-radius: 14px;
+    border: 1px solid rgba(0, 0, 0, 0.04);
     box-sizing: border-box;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
 }
 
 .control-section h4 {
-    margin: 0 0 15px 0;
-    color: #333;
+    margin: 0 0 12px 0;
+    color: #1d1d1f;
     font-size: 16px;
     font-weight: 600;
+    letter-spacing: -0.01em;
     display: flex;
     align-items: center;
     gap: 8px;
 }
 
 .control-section i {
-    color: #667eea;
+    color: #007AFF;
 }
 
 .preview h3, .preview-cam1 h3 {
-    margin: 0 0 15px 0;
-    color: white;
-    font-size: 18px;
+    margin: 0 0 16px 0;
+    color: #1d1d1f;
+    font-size: 20px;
     font-weight: 600;
     text-align: center;
-    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+    letter-spacing: -0.01em;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -834,7 +829,7 @@ input[type="range"]:focus {
 }
 
 .preview h3 i, .preview-cam1 h3 i {
-    color: #4fc3f7;
+    color: #007AFF;
 }
 
 .chart-controls h4 {
@@ -1121,7 +1116,7 @@ input[type="range"]:focus {
     
     .btn {
         width: 200px;
-        height: 60px;
+        height: 50px;
     }
     
     .chart-checkboxes {
@@ -1527,6 +1522,175 @@ input[type="range"]:focus {
     to { transform: rotate(360deg); }
 }
 
+
+/* 橙色 - 系统和工具类按钮 */
+#wifiBtn, #updateBtn {
+    background: #FF9500;
+    box-shadow: 0 4px 16px rgba(255, 149, 0, 0.24), 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+#wifiBtn:hover, #updateBtn:hover {
+    background: #FFAD33;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(255, 149, 0, 0.32), 0 2px 6px rgba(0, 0, 0, 0.06);
+}
+
+
+/* 系统更新模态框样式 */
+.update-section {
+    display: flex;
+    flex-direction: column;
+    gap: 25px;
+}
+
+.version-info {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 20px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.version-info h4 {
+    margin: 0 0 15px 0;
+    color: #4CAF50;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.version-details {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.version-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.version-item:last-child {
+    border-bottom: none;
+}
+
+.version-label {
+    font-weight: 600;
+    color: #b0b0b0;
+    min-width: 80px;
+}
+
+.version-value {
+    color: #e0e0e0;
+    text-align: right;
+    flex: 1;
+    margin-left: 15px;
+}
+
+.update-controls {
+    background: rgba(255, 255, 255, 0.05);
+    padding: 20px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.update-buttons {
+    display: flex;
+    gap: 15px;
+    justify-content: center;
+}
+
+.update-progress {
+    background: rgba(33, 150, 243, 0.1);
+    border: 1px solid #2196F3;
+    border-radius: 10px;
+    padding: 20px;
+}
+
+.update-progress h4 {
+    margin: 0 0 15px 0;
+    color: #2196F3;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.progress-info {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.progress-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.progress-label {
+    font-weight: 600;
+    color: #b0b0b0;
+}
+
+.progress-value {
+    color: #2196F3;
+    font-weight: 500;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #2196F3, #4CAF50);
+    width: 0%;
+    transition: width 0.3s ease;
+    border-radius: 4px;
+}
+
+.update-result {
+    border-radius: 10px;
+    padding: 20px;
+}
+
+.update-result.success {
+    background: rgba(76, 175, 80, 0.1);
+    border: 1px solid #4CAF50;
+}
+
+.update-result.error {
+    background: rgba(244, 67, 54, 0.1);
+    border: 1px solid #F44336;
+}
+
+.update-result.success #updateResultContent {
+    color: #4CAF50;
+}
+
+.update-result.error #updateResultContent {
+    color: #F44336;
+}
+
+.version-value.new-version {
+    color: #4CAF50;
+    font-weight: 600;
+}
+
+.version-value.current-version {
+    color: #FF9800;
+}
+
+.version-value.up-to-date {
+    color: #4CAF50;
+}
+
 /* 响应式设计 */
 @media (max-width: 768px) {
     .modal-content {
@@ -1538,7 +1702,8 @@ input[type="range"]:focus {
         padding: 20px 15px;
     }
     
-    .form-actions {
+    .form-actions,
+    .update-buttons {
         flex-direction: column;
         gap: 10px;
     }
@@ -1547,5 +1712,16 @@ input[type="range"]:focus {
     .btn-secondary {
         width: 100%;
         justify-content: center;
+    }
+    
+    .version-item {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 5px;
+    }
+    
+    .version-value {
+        text-align: left;
+        margin-left: 0;
     }
 }

@@ -469,6 +469,23 @@ html, body {
     box-shadow: 0 0 0 4px rgba(0, 122, 255, 0.2);
 }
 
+/* 禁用按钮样式 */
+.btn.disabled,
+.btn:disabled {
+    background: #ccc !important;
+    color: #666 !important;
+    cursor: not-allowed !important;
+    opacity: 0.6 !important;
+    transform: none !important;
+    box-shadow: none !important;
+}
+
+.btn.disabled:hover,
+.btn:disabled:hover {
+    transform: none !important;
+    box-shadow: none !important;
+}
+
 /* 录制按钮的脉冲动画 */
 @keyframes pulse {
     0% {

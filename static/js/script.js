@@ -134,7 +134,16 @@ socket.on('capture_cam1_response', function(data) {
 // Recording status
 socket.on('recording_status', function(data) {
     console.log('Recording status:', data.message);
-    addLogMessage(data.message, 'info');
+    addLogMessage(data.message, data.error ? 'error' : 'info');
+    
+    if (data.error) {
+        // 录制失败，重置状态
+        isRecording = false;
+        document.getElementById('recordBtn').innerHTML = '<i class="fas fa-video"></i><br>显微录制';
+        document.getElementById('recordBtn').classList.remove('recording');
+        return;
+    }
+    
     if (data.recording) {
         const intervalValue = document.getElementById('delay').value;
         if (intervalValue > 0) {
@@ -143,6 +152,9 @@ socket.on('recording_status', function(data) {
             document.getElementById('recordBtn').innerHTML = '<i class="fas fa-video"></i><br>显微录制中（点击停止）';
         }
         document.getElementById('recordBtn').classList.add('recording');
+        // 禁用辅助摄像头录制按钮
+        document.getElementById('recordCam1Btn').disabled = true;
+        document.getElementById('recordCam1Btn').classList.add('disabled');
     }
 });
 
@@ -168,12 +180,30 @@ socket.on('recording_response', function(data) {
     document.getElementById('recordBtn').innerHTML = '<i class="fas fa-video"></i><br>显微录制';
     document.getElementById('recordBtn').classList.remove('recording');
     isRecording = false;
+    // 重新启用辅助摄像头录制按钮
+    document.getElementById('recordCam1Btn').disabled = false;
+    document.getElementById('recordCam1Btn').classList.remove('disabled');
 });
 
 // Cam1 recording status
 socket.on('recording_cam1_status', function(data) {
+    addLogMessage(data.message, data.error ? 'error' : 'info');
+    
+    if (data.error) {
+        // 录制失败，重置状态
+        isRecordingCam1 = false;
+        document.getElementById('recordCam1Btn').innerHTML = '<i class="fas fa-video"></i><br>辅助录制';
+        document.getElementById('recordCam1Btn').classList.remove('recording');
+        return;
+    }
+    
     if (data.recording) {
-        addLogMessage(data.message, 'info');
+        // 录制成功，更新按钮状态
+        document.getElementById('recordCam1Btn').innerHTML = '<i class="fas fa-video"></i><br>录制中（点击停止）';
+        document.getElementById('recordCam1Btn').classList.add('recording');
+        // 禁用主摄像头录制按钮
+        document.getElementById('recordBtn').disabled = true;
+        document.getElementById('recordBtn').classList.add('disabled');
     }
 });
 
@@ -201,6 +231,9 @@ socket.on('recording_cam1_response', function(data) {
     document.getElementById('recordCam1Btn').innerHTML = '<i class="fas fa-video"></i><br>辅助录制';
     document.getElementById('recordCam1Btn').classList.remove('recording');
     isRecordingCam1 = false;
+    // 重新启用主摄像头录制按钮
+    document.getElementById('recordBtn').disabled = false;
+    document.getElementById('recordBtn').classList.remove('disabled');
 });
 
 // Motion detection status
@@ -556,6 +589,13 @@ function toggleRecording() {
     if (isRecording) {
         socket.emit('stop_recording');
     } else {
+        // 检查辅助摄像头是否正在录制
+        if (isRecordingCam1) {
+            addLogMessage('辅助摄像头正在录制中，请先停止辅助摄像头录制', 'error');
+            alert('辅助摄像头正在录制中，请先停止辅助摄像头录制');
+            return;
+        }
+        
         // Get current interval value from slider
         const intervalValue = document.getElementById('delay').value;
         socket.emit('start_recording', { interval: parseFloat(intervalValue) });
@@ -574,6 +614,13 @@ function toggleCam1Recording() {
     if (isRecordingCam1) {
         socket.emit('stop_recording_cam1');
     } else {
+        // 检查主摄像头是否正在录制
+        if (isRecording) {
+            addLogMessage('主摄像头正在录制中，请先停止主摄像头录制', 'error');
+            alert('主摄像头正在录制中，请先停止主摄像头录制');
+            return;
+        }
+        
         socket.emit('start_recording_cam1');
         isRecordingCam1 = true;
         // 更新按钮状态

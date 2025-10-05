@@ -116,6 +116,7 @@ class VideoCamera(object):
             rgb = cv2.warpPerspective(rgb, self.cam1_params, self.cam1_output_size)
             rgb = rgb[1000:, 800:2700]
             rgb_preview = cv2.resize(rgb, self.preview_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
+            rgb = cv2.resize(rgb, self.video_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
             # TO-DO视频录制失败
         else:
             if rgb.shape[0] > self.preview_size[0]:  #默认是video_size采集图像

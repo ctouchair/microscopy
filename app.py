@@ -425,8 +425,13 @@ def handle_capture_cam1():
 
 @socketio.on('start_recording')
 def handle_start_recording(data=None):
-    global is_recording, recording_interval
+    global is_recording, recording_interval, is_recording_cam1
     if not is_recording:
+        # 检查辅助摄像头是否正在录制
+        if is_recording_cam1:
+            emit('recording_status', {'recording': False, 'message': '辅助摄像头正在录制中，请先停止辅助摄像头录制', 'error': True})
+            return
+        
         # Get the current recording interval from frontend if provided
         if data and 'interval' in data:
             recording_interval = float(data['interval'])
@@ -470,8 +475,13 @@ def handle_stop_recording():
 
 @socketio.on('start_recording_cam1')
 def handle_start_recording_cam1():
-    global is_recording_cam1
+    global is_recording_cam1, is_recording
     if not is_recording_cam1:
+        # 检查主摄像头是否正在录制
+        if is_recording:
+            emit('recording_cam1_status', {'recording': False, 'message': '主摄像头正在录制中，请先停止主摄像头录制', 'error': True})
+            return
+        
         is_recording_cam1 = True
         threading.Thread(target=record_video_cam1).start()
         emit('recording_cam1_status', {'recording': True, 'message': '辅助摄像头录制已开始'})

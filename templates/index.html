@@ -18,7 +18,19 @@
                 <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed" style="display: none;"/>
             </div>
             <div class="preview-cam1">
-                <h3><i class="fas fa-video"></i> 辅助摄像头预览</h3>
+                <div class="cam1-header">
+                    <h3><i class="fas fa-video"></i> 辅助摄像头预览</h3>
+                    <div class="cam1-mode-selector">
+                        <label class="mode-option">
+                            <input type="radio" name="cam1Mode" value="normal" checked>
+                            <span class="mode-label">正常模式</span>
+                        </label>
+                        <label class="mode-option">
+                            <input type="radio" name="cam1Mode" value="corrected">
+                            <span class="mode-label">校正模式</span>
+                        </label>
+                    </div>
+                </div>
                 <canvas id="videoCanvasCam1" width="820" height="616"></canvas>
                 <img id="videoFeedCam1" src="{{ url_for('video_feed_cam1') }}" alt="Video Feed Cam1" style="display: none;"/>
             </div>
@@ -49,8 +61,17 @@
             </div>
             
             <div class="button-row">
-                <button id="autoBrightnessBtn" class="btn" onclick="autoBrightness()">
-                    <i class="fas fa-lightbulb"></i><br>自动亮度
+                <button id="autoBrightnessBtn0" class="btn" onclick="autoBrightness(0)">
+                    <i class="fas fa-lightbulb"></i><br>反射自动亮度
+                </button>
+                <button id="autoBrightnessBtn1" class="btn" onclick="autoBrightness(1)">
+                    <i class="fas fa-sun"></i><br>透射自动亮度
+                </button>
+            </div>
+            
+            <div class="button-row">
+                <button id="captureCam1Btn" class="btn" onclick="captureCam1Screenshot()">
+                    <i class="fas fa-camera"></i><br>辅助拍照
                 </button>
                 <button id="recordCam1Btn" class="btn" onclick="toggleCam1Recording()">
                     <i class="fas fa-video"></i><br>辅助录制
@@ -122,10 +143,16 @@
                     </div>
                 </div>
 
-                <!-- LED亮度 -->
-                <div class="slider-single">
-                    <span id="led_value" class="slider-value">LED亮度：0</span>
-                    <input type="range" id="led" min="0" max="100" step="1" value="10">
+                <!-- LED亮度控制 -->
+                <div class="slider-row">
+                    <div class="slider-group">
+                        <span id="led_value_0" class="slider-value">反射亮度：0</span>
+                        <input type="range" id="led_0" min="0" max="20" step="1" value="0">
+                    </div>
+                    <div class="slider-group">
+                        <span id="led_value_1" class="slider-value">透射亮度：0</span>
+                        <input type="range" id="led_1" min="0" max="50" step="1" value="0">
+                    </div>
                 </div>
 
                 <!-- 白平衡增益 R 和 B -->

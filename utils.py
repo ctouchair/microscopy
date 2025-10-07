@@ -78,42 +78,6 @@ def crop_center_expanding_rect(image, target_ratio=4/3):
         return None
 
 
-def calibrate_circle(image):
-    """
-    根据切片的圆形图案，校准像素尺寸
-    """
-    gray_img = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    # 对灰度图像进行高斯模糊处理，减少噪声
-    blurred_image = cv2.GaussianBlur(gray_img, (15, 15), 0)
-
-    # 使用霍夫圆检测识别圆形
-    circles = cv2.HoughCircles(blurred_image, cv2.HOUGH_GRADIENT, dp=1.2, minDist=500,
-                            param1=50, param2=30, minRadius=400, maxRadius=700)
-
-    if circles is None:
-        print("未检测到圆形，请调整参数或检查图片。")
-        return None
-
-    # 检查是否检测到圆形
-    if circles is not None:
-        # 将圆的坐标和半径转换为整数
-        circles = np.round(circles[0, :]).astype("int")
-        d, point = [], []
-        # 输出检测到的圆形个数和每个圆形的像素面积
-        for i, (x, y, r) in enumerate(circles):
-            # 计算圆形的像素面积 (π * r^2)
-            print(f"第 {i+1} 个圆形的像素半径: {r:.2f} 像素")
-            d.append(2*r)
-            point.append((x,y))
-            # 可选：绘制圆形及其中心
-            cv2.circle(image, (x, y), r, (0, 255, 0), 4)  # 绘制圆形
-            cv2.rectangle(image, (x-5, y-5), (x+5, y+5), (0, 128, 255), -1)  # 绘制中心点
-        mean_d = np.sum(d)/len(d)
-        distance_per_pixel = 100/mean_d
-        print(f'每个像素对应的尺寸为{distance_per_pixel:.4f} um')
-        return distance_per_pixel, point
-    else:
-        return None, None
 
 
 def get_translation_shift(points1, points2):

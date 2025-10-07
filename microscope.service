@@ -10,10 +10,10 @@ User=admin
 Group=admin
 WorkingDirectory=/home/admin/Documents/microscopy
 Environment=PATH=/home/admin/Documents/micro_env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStartPre=/bin/sleep 5
+ExecStartPre=/bin/sleep 7
 ExecStart=/home/admin/Documents/micro_env/bin/python /home/admin/Documents/microscopy/app.py
 Restart=always
-RestartSec=5
+RestartSec=7
 StandardOutput=journal
 StandardError=journal
 KillMode=mixed

@@ -14,7 +14,7 @@ import json
 import numpy as np
 import base64
 import io
-from utils import stitch_images, crop_center_expanding_rect, calibrate_circle, get_translation_shift, focus_stack, count_cells
+from utils import stitch_images, crop_center_expanding_rect, get_translation_shift, focus_stack, count_cells
 
 imx477_dict = {
     "preview_size": (1014, 760),  # 预览分辨率
@@ -709,63 +709,6 @@ def handle_focus_stack():
         cam0.preview_config()
 
 
-@socketio.on('calibrate_system')
-def handle_calibrate_system():
-    try:
-        # 发送开始校准的状态
-        emit('calibration_status', {'status': 'started', 'message': '开始系统校准...'})
-        
-
-        # 拍摄第一张样本图片
-        print("拍摄第一张校准图片...")
-        send_log_message('拍摄校准图片...', 'info')
-        rgb = cam0.capture_config()
-        # 使用calibrate_circle获得每个像素对应的实际距离
-        print("分析圆形标准件...")
-        send_log_message('分析圆形标准件...', 'info')
-        pixel_size, point = calibrate_circle(rgb)
-        if pixel_size is None:
-            emit('calibration_response', {
-                'success': False,
-                'error': '无法检测到圆形标准件，请确保视野中有圆形参考物'
-            })
-            return
-                
-        print(f"校准结果:")
-        print(f"像素尺寸: {pixel_size:.4f} μm/pixel")
-        send_log_message(f'校准完成 - 像素尺寸: {pixel_size:.4f} μm/pixel', 'success')
-        
-        
-        # 自动保存校准结果到settings.json
-        try:
-            settings = {
-                'exposure_value': cam0.exposure_time/1000,
-                'gain_value': cam0.analogue_gain,
-                'led_value_0': motor0.led_cycle0,
-                'led_value_1': motor0.led_cycle1,
-                'r_value': cam0.r_gain,
-                'b_value': cam0.b_gain,
-                'pixel_size': pixel_size,
-            }
-            with open('/home/admin/Documents/microscopy/settings.json', 'w') as f:
-                json.dump(settings, f)
-            print("校准结果已保存到settings.json")
-        except Exception as save_error:
-            print(f"保存校准结果失败: {save_error}")
-        
-        emit('calibration_response', {
-            'success': True,
-            'pixel_size': pixel_size,
-        })
-        
-    except Exception as e:
-        print(f"Calibration error: {e}")
-        emit('calibration_response', {
-            'success': False,
-            'error': str(e)
-        })
-    finally:
-        cam0.preview_config()
 
 
 @socketio.on('cell_count')

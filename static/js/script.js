@@ -322,28 +322,6 @@ socket.on('focus_stack_response', function(data) {
     document.getElementById('focus_stack').disabled = false;
 });
 
-// Calibration status updates
-socket.on('calibration_status', function(data) {
-    if (data.status === 'started') {
-        document.getElementById('calibrate').innerHTML = '<i class="fas fa-ruler"></i><br>校准中...';
-        document.getElementById('calibrate').disabled = true;
-        alert(data.message);
-    }
-});
-
-// Calibration response
-socket.on('calibration_response', function(data) {
-    if (data.success) {
-        alert(`系统校准完成！\n像素尺寸: ${data.pixel_size.toFixed(4)} μm/pixel`);
-    } else {
-        console.error('Calibration failed:', data.error);
-        alert('系统校准失败: ' + data.error);
-    }
-    
-    // Reset button state
-    document.getElementById('calibrate').innerHTML = '<i class="fas fa-ruler"></i><br>系统校准';
-    document.getElementById('calibrate').disabled = false;
-});
 
 // Cell count status updates
 socket.on('cell_count_status', function(data) {
@@ -653,9 +631,6 @@ function focusStack() {
     socket.emit('focus_stack');
 }
 
-function calibrateSystem() {
-    socket.emit('calibrate_system');
-}
 
 function cellCount() {
     socket.emit('cell_count');

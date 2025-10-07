@@ -15,7 +15,7 @@ fi
 
 # 定义路径
 SERVICE_FILE="/etc/systemd/system/microscope.service"
-PROJECT_DIR="/home/admin/Documents/project"
+PROJECT_DIR="/home/admin/Documents/microscopy"
 
 # 检查项目目录是否存在
 if [ ! -d "$PROJECT_DIR" ]; then

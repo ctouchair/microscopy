@@ -12,7 +12,7 @@
 
 1. 进入项目目录：
 ```bash
-cd /home/admin/Documents/project
+cd /home/admin/Documents/microscopy
 ```
 
 2. 运行安装脚本（需要sudo权限）：
@@ -113,7 +113,7 @@ sudo bash install_autostart.sh
 ## 注意事项
 
 1. 确保虚拟环境路径正确：`/home/admin/Documents/micro_env/`
-2. 确保项目路径正确：`/home/admin/Documents/project/`
+2. 确保项目路径正确：`/home/admin/Documents/microscopy/`
 3. 确保admin用户有相应的硬件访问权限（GPIO、摄像头等）
 4. 如果修改了项目路径，需要更新`microscope.service`文件中的路径
 5. 系统重启后服务会自动启动，无需手动干预 

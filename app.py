@@ -1458,6 +1458,7 @@ def handle_system_update(data):
         import subprocess
         import tempfile
         import shutil
+        import glob
         
         # 创建临时目录
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1476,10 +1477,8 @@ def handle_system_update(data):
             send_log_message('代码下载完成，正在更新文件...', 'info')
             emit('update_status', {'status': 'updating', 'message': '正在更新系统文件...'})
             
-            # 停止当前服务
-            send_log_message('正在停止显微镜服务...', 'info')
-            subprocess.run(['sudo', 'systemctl', 'stop', 'microscope.service'], 
-                         capture_output=True, timeout=10)
+            # 重启服务以应用更新
+            send_log_message('正在重启显微镜服务以应用更新...', 'info')
             
             # 备份当前配置文件
             backup_files = [
@@ -1539,10 +1538,17 @@ def handle_system_update(data):
             
             # 设置文件权限
             send_log_message('正在设置文件权限...', 'info')
-            subprocess.run(['sudo', 'chown', '-R', 'admin:admin', microscopy_path], 
-                         capture_output=True)
-            subprocess.run(['sudo', 'chmod', '+x', microscopy_path + '/*.sh'], 
-                         capture_output=True)
+            chown_result = subprocess.run(['sudo', 'chown', '-R', 'admin:admin', microscopy_path], 
+                         capture_output=True, text=True)
+            if chown_result.returncode != 0:
+                send_log_message(f'设置文件所有者警告: {chown_result.stderr}', 'warning')
+            
+            # 设置shell脚本执行权限
+            for script_file in glob.glob(os.path.join(microscopy_path, '*.sh')):
+                chmod_result = subprocess.run(['sudo', 'chmod', '+x', script_file], 
+                             capture_output=True, text=True)
+                if chmod_result.returncode != 0:
+                    send_log_message(f'设置脚本权限警告: {chmod_result.stderr}', 'warning')
             
             # 更新系统服务文件
             service_file = microscopy_path + '/microscope.service'
@@ -1569,10 +1575,14 @@ def handle_system_update(data):
             # 等待前端接收消息后再重启
             time.sleep(2)
             
-            # 重新启动服务
-            send_log_message('正在重新启动显微镜服务...', 'info')
-            subprocess.run(['sudo', 'systemctl', 'start', 'microscope.service'], 
-                         capture_output=True, timeout=15)
+            # 重启服务
+            send_log_message('正在重启显微镜服务...', 'info')
+            restart_result = subprocess.run(['sudo', 'systemctl', 'restart', 'microscope.service'], 
+                         capture_output=True, text=True, timeout=15)
+            
+            if restart_result.returncode != 0:
+                send_log_message(f'服务重启失败: {restart_result.stderr}', 'error')
+                raise Exception(f"服务重启失败: {restart_result.stderr}")
             
             # 检查服务状态
             time.sleep(2)
@@ -1580,10 +1590,18 @@ def handle_system_update(data):
                                          capture_output=True, text=True)
             
             if status_result.stdout.strip() == 'active':
-                send_log_message('系统更新完成，服务已重新启动', 'success')
+                send_log_message('系统更新完成，服务已重启', 'success')
                 # 这个消息可能不会被发送，因为服务重启了
             else:
-                send_log_message('服务启动失败，请检查日志', 'error')
+                send_log_message(f'服务状态异常: {status_result.stdout.strip()}', 'error')
+                # 尝试获取服务日志
+                try:
+                    journal_result = subprocess.run(['sudo', 'journalctl', '-u', 'microscope.service', '-n', '10', '--no-pager'], 
+                                                   capture_output=True, text=True, timeout=5)
+                    if journal_result.returncode == 0:
+                        send_log_message(f'服务日志: {journal_result.stdout}', 'error')
+                except:
+                    pass
         
     except subprocess.TimeoutExpired:
         send_log_message('系统更新超时', 'error')
@@ -1599,12 +1617,17 @@ def handle_system_update(data):
             'error': str(e)
         })
         
-        # 尝试重新启动服务
+        # 尝试重启服务
         try:
-            subprocess.run(['sudo', 'systemctl', 'start', 'microscope.service'], 
-                         capture_output=True, timeout=10)
-        except:
-            pass
+            send_log_message('尝试重启服务...', 'info')
+            restart_result = subprocess.run(['sudo', 'systemctl', 'restart', 'microscope.service'], 
+                         capture_output=True, text=True, timeout=10)
+            if restart_result.returncode == 0:
+                send_log_message('服务已重启', 'success')
+            else:
+                send_log_message(f'服务重启失败: {restart_result.stderr}', 'error')
+        except Exception as restart_error:
+            send_log_message(f'服务重启异常: {str(restart_error)}', 'error')
 
 
 @socketio.on('check_update')

@@ -302,6 +302,9 @@ def load_settings():
             # 读取校准的步数值，如果不存在则使用默认值1500
             cam0.pixel_size = settings.get('pixel_size', 0.09)
             print(f"Loaded pixel_size: {cam0.pixel_size}")
+            # 读取显微镜倍率，如果不存在则使用默认值40
+            cam0.mag_scale = settings.get('magnification', 40)
+            print(f"Loaded magnification: {cam0.mag_scale}")
         return settings
     except FileNotFoundError:
         print("Settings file not found. Using default settings.")
@@ -1142,6 +1145,26 @@ def handle_set_magnification(data):
         
         # 更新cam0的mag_scale值
         cam0.mag_scale = magnification
+        
+        # 只保存倍率参数到settings.json
+        try:
+            # 先读取现有配置
+            try:
+                with open('/home/admin/Documents/microscopy/settings.json', 'r') as f:
+                    settings = json.load(f)
+            except FileNotFoundError:
+                settings = {}
+            
+            # 只更新倍率参数
+            settings['magnification'] = cam0.mag_scale
+            
+            # 保存更新后的配置
+            with open('/home/admin/Documents/microscopy/settings.json', 'w') as f:
+                json.dump(settings, f)
+            print(f"Magnification saved: {magnification}")
+        except Exception as save_error:
+            print(f"Failed to save magnification: {save_error}")
+        
         send_log_message(f'显微镜倍率已设置为: {magnification}倍', 'info')
         emit('magnification_set', {'status': 'success', 'magnification': magnification})
     except Exception as e:
@@ -1197,6 +1220,7 @@ def handle_save_config():
             'r_value': cam0.r_gain,
             'b_value': cam0.b_gain,
             'steps_per_mm': motor0.steps_per_mm,
+            'magnification': cam0.mag_scale,  # 保存显微镜倍率
         }
         with open('/home/admin/Documents/microscopy/settings.json', 'w') as f:
             json.dump(settings, f)

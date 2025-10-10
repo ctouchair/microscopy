@@ -82,6 +82,26 @@ socket.on('settings_update', function(settings) {
         document.getElementById('b_bal').value = settings.b_value;
         document.getElementById('b_value').textContent = `白平衡蓝色增益：${settings.b_value}`;
     }
+    if (settings.show_xyz !== undefined) {
+        window.showXyzEstimates = settings.show_xyz;
+        // 更新位置调试勾选方框的状态
+        const showXyzDebug = document.getElementById('showXyzDebug');
+        if (showXyzDebug) {
+            showXyzDebug.checked = settings.show_xyz;
+        }
+        // 如果图表已经初始化，更新估算曲线的显示状态
+        if (window.mainChart) {
+            updateXyzEstimateVisibility();
+        }
+    }
+    if (settings.magnification !== undefined) {
+        // 更新显微镜倍率按钮的状态
+        const magnificationIndex = window.magnificationValues.indexOf(settings.magnification);
+        if (magnificationIndex !== -1) {
+            window.currentMagnificationIndex = magnificationIndex;
+            updateMagnificationDisplay();
+        }
+    }
     if (settings.x_pos !== undefined) {
         document.getElementById('x_pos').value = settings.x_pos;
         document.getElementById('x_value').textContent = `X目标位置：${settings.x_pos} mm`;
@@ -836,6 +856,70 @@ document.addEventListener('DOMContentLoaded', function() {
             setAxisVisibility('Z', this.checked);
         });
     }
+    
+    // 位置调试勾选方框事件处理
+    const showXyzDebug = document.getElementById('showXyzDebug');
+    if (showXyzDebug) {
+        showXyzDebug.addEventListener('change', function() {
+            // 发送SocketIO事件来切换show_xyz变量
+            socket.emit('toggle_show_xyz', { show_xyz: this.checked });
+        });
+    }
+    
+    // 监听show_xyz_toggled事件
+    socket.on('show_xyz_toggled', function(data) {
+        if (data.status === 'success') {
+            window.showXyzEstimates = data.show_xyz;
+            // 更新图表中估算曲线的显示状态
+            if (window.mainChart) {
+                updateXyzEstimateVisibility();
+            }
+        } else {
+            console.error('切换位置调试模式失败:', data.message);
+            // 如果切换失败，恢复勾选方框的原始状态
+            if (showXyzDebug) {
+                showXyzDebug.checked = !showXyzDebug.checked;
+            }
+        }
+    });
+    
+    // 显微镜倍率循环切换功能
+    window.currentMagnificationIndex = 2; // 默认40倍，索引为2
+    window.magnificationValues = [10, 20, 40, 60, 100];
+    window.magnificationTexts = ['10倍', '20倍', '40倍', '60倍', '100倍'];
+    
+    // 更新倍率显示
+    function updateMagnificationDisplay() {
+        const magnificationText = document.getElementById('magnification-text');
+        if (magnificationText) {
+            magnificationText.textContent = window.magnificationTexts[window.currentMagnificationIndex];
+        }
+    }
+    
+    // 循环切换倍率函数
+    window.cycleMagnification = function() {
+        // 切换到下一个倍率
+        window.currentMagnificationIndex = (window.currentMagnificationIndex + 1) % window.magnificationValues.length;
+        const newMagnification = window.magnificationValues[window.currentMagnificationIndex];
+        
+        // 更新显示
+        updateMagnificationDisplay();
+        
+        // 发送SocketIO事件来更新显微镜倍率
+        socket.emit('set_magnification', { magnification: newMagnification });
+    };
+    
+    // 监听magnification_set事件
+    socket.on('magnification_set', function(data) {
+        if (data.status === 'success') {
+            console.log('显微镜倍率已更新为:', data.magnification);
+        } else {
+            console.error('设置显微镜倍率失败:', data.message);
+            // 如果设置失败，恢复到之前的倍率
+            window.currentMagnificationIndex = (window.currentMagnificationIndex - 1 + window.magnificationValues.length) % window.magnificationValues.length;
+            updateMagnificationDisplay();
+        }
+    });
 
     // Initialize chart
     const ctx = document.getElementById('mainChart');
@@ -903,9 +987,25 @@ document.addEventListener('DOMContentLoaded', function() {
             mainChart.update();
         }
 
+        function updateXyzEstimateVisibility() {
+            if (!window.mainChart || window.showXyzEstimates === undefined) return;
+            
+            // 估算曲线对应的数据集索引：X估算(1), Y估算(3), Z估算(5)
+            const estimateDatasetIndices = [1, 3, 5];
+            
+            estimateDatasetIndices.forEach(idx => {
+                const meta = mainChart.getDatasetMeta(idx);
+                if (meta) {
+                    meta.hidden = !window.showXyzEstimates;
+                }
+            });
+            mainChart.update();
+        }
+
         // Make mainChart and setAxisVisibility available globally
         window.mainChart = mainChart;
         window.setAxisVisibility = setAxisVisibility;
+        window.updateXyzEstimateVisibility = updateXyzEstimateVisibility;
         window.timeLabels = timeLabels;
         window.xPosData = xPosData;
         window.yPosData = yPosData;
@@ -913,6 +1013,11 @@ document.addEventListener('DOMContentLoaded', function() {
         window.xVolData = xVolData;
         window.yVolData = yVolData;
         window.zVolData = zVolData;
+        
+        // 初始化时根据show_xyz变量设置估算曲线的显示状态
+        if (window.showXyzEstimates !== undefined) {
+            updateXyzEstimateVisibility();
+        }
     }
 });
 

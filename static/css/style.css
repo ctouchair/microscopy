@@ -202,6 +202,60 @@ html, body {
     box-sizing: border-box;
 }
 
+/* 倍率按钮特殊样式 */
+.magnification-btn {
+    position: relative;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 8px 12px;
+}
+
+.magnification-btn::after {
+    content: '\f0ec';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    font-size: 9px;
+    color: rgba(255, 255, 255, 0.6);
+    transition: all 0.3s ease;
+}
+
+.magnification-btn:hover::after {
+    color: rgba(255, 255, 255, 1);
+    transform: rotate(180deg);
+}
+
+#magnification-text {
+    font-size: 12px;
+    font-weight: 600;
+    color: white;
+    line-height: 1.2;
+    transition: all 0.3s ease;
+}
+
+.magnification-btn:hover #magnification-text {
+    transform: scale(1.05);
+}
+
+.magnification-label {
+    font-size: 11px;
+    font-weight: 400;
+    color: rgba(255, 255, 255, 0.8);
+    margin-bottom: 1px;
+    line-height: 1.2;
+    transition: all 0.3s ease;
+}
+
+.magnification-btn:hover .magnification-label {
+    color: rgba(255, 255, 255, 1);
+    transform: scale(1.02);
+}
+
 .btn {
     background: #007AFF;
     padding: 6px 12px;

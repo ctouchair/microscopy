@@ -20,6 +20,7 @@ class VideoCamera(object):
         self.pixel_size = 0.09 #um
         self.cam1_params, self.cam1_output_size = load_fused_perspective_transform('/home/admin/Documents/microscopy/fused_perspective_transform_params.json')
         self.apply_perspective = False
+        self.mag_scale = 40
 
 
     def __stop__(self):

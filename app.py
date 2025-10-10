@@ -54,6 +54,9 @@ is_veiwing = True # 控制摄像头是否在运行
 move_task = False
 recording_interval = 0  # 拍摄间隔时间（秒），0表示不进行间隔拍摄
 
+# 控制前端图表显示
+show_xyz = False  # 控制XYZ估算位置曲线的显示，False时隐藏估算曲线，只保留实线位置曲线
+
 # 辅助摄像头录制状态
 is_recording_cam1 = False
 video_writer_cam1 = None
@@ -334,7 +337,9 @@ def handle_connect():
         **settings,
         'x_pos': round(motor0.x_pos / motor0.steps_per_mm, 2),  # Convert steps to mm
         'y_pos': round(motor0.y_pos / motor0.steps_per_mm, 2),
-        'z_pos': round(motor0.z_pos / motor0.steps_per_mm, 2)
+        'z_pos': round(motor0.z_pos / motor0.steps_per_mm, 2),
+        'show_xyz': show_xyz,  # 添加show_xyz变量到初始数据中
+        'magnification': cam0.mag_scale  # 添加显微镜倍率到初始数据中
     }
     emit('settings_update', initial_data)
 
@@ -526,12 +531,12 @@ def handle_stitch_images():
         # 保存当前位置
         original_x = motor0.x_pos
         original_y = motor0.y_pos
-        
+        mag_scale = 40/cam0.mag_scale
         # 计算移动步长（根据图像分辨率和视野计算）
         # 假设图像视野为0.4mm x 0.3mm，需要50%重叠区域
         # 每张图片移动0.2mm，确保有足够重叠
-        step_x_size = int(1024 * 0.32)  # 0.32mm步长，确保30%重叠
-        step_y_size = int(1024* 0.24)  # 0.24mm步长，确保30%重叠
+        step_x_size = int(1024 * 0.32*mag_scale)  # 0.32mm步长，确保30%重叠
+        step_y_size = int(1024* 0.24*mag_scale)  # 0.24mm步长，确保30%重叠
         # 拍摄3x3网格的图片，从左上角开始
         # 贪吃蛇形状运动：左上→右上→右中→右下→中下→中中→中上→左中→左上
         # 每张图片移动步长，确保有足够重叠区域进行拼接
@@ -632,9 +637,9 @@ def handle_focus_stack():
         
         # 保存当前Z位置
         original_z = motor0.z_pos
-        
+        mag_scale = 40/cam0.mag_scale
         # 计算Z轴移动步长（每张图片间隔0.02mm，总共覆盖0.08mm景深）
-        step_z_size = int(5)  # 0.02mm步长
+        step_z_size = int(5*mag_scale)  # 0.02mm步长
         z_positions = [-3*step_z_size, -2*step_z_size, -step_z_size, 0, step_z_size, 2*step_z_size, 3*step_z_size]  # 7个位置
         
         for i, dz in enumerate(z_positions):
@@ -1110,6 +1115,38 @@ def handle_set_b_bal(data):
         emit('b_bal_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
         emit('b_bal_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('toggle_show_xyz')
+def handle_toggle_show_xyz(data):
+    """切换XYZ估算位置曲线的显示状态"""
+    global show_xyz
+    try:
+        show_xyz = bool(data.get('show_xyz', False))
+        send_log_message(f'位置调试模式已{"开启" if show_xyz else "关闭"}', 'info')
+        emit('show_xyz_toggled', {'status': 'success', 'show_xyz': show_xyz})
+    except Exception as e:
+        send_log_message(f'切换位置调试模式失败: {str(e)}', 'error')
+        emit('show_xyz_toggled', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('set_magnification')
+def handle_set_magnification(data):
+    """设置显微镜倍率"""
+    try:
+        magnification = int(data.get('magnification', 40))
+        # 验证倍率值是否有效
+        valid_magnifications = [10, 20, 40, 60, 100]
+        if magnification not in valid_magnifications:
+            raise ValueError(f"无效的倍率值: {magnification}")
+        
+        # 更新cam0的mag_scale值
+        cam0.mag_scale = magnification
+        send_log_message(f'显微镜倍率已设置为: {magnification}倍', 'info')
+        emit('magnification_set', {'status': 'success', 'magnification': magnification})
+    except Exception as e:
+        send_log_message(f'设置显微镜倍率失败: {str(e)}', 'error')
+        emit('magnification_set', {'status': 'error', 'message': str(e)})
 
 
 @socketio.on('set_cam1_mode')

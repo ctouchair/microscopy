@@ -40,6 +40,7 @@
                     <label><input type="checkbox" id="showX" checked> <i class="fas fa-arrows-alt-h"></i> X轴</label>
                     <label><input type="checkbox" id="showY" checked> <i class="fas fa-arrows-alt-v"></i> Y轴</label>
                     <label><input type="checkbox" id="showZ" checked> <i class="fas fa-arrows-alt"></i> Z轴</label>
+                    <label><input type="checkbox" id="showXyzDebug"> <i class="fas fa-bug"></i> 位置调试</label>
                 </div>
             </div>
             <div class="chart-container">
@@ -173,10 +174,13 @@
                     <input type="range" id="delay" min="0" max="10" step="0.2" value="0">
                 </div>
                 
-                <!-- 细胞计数按钮 -->
+                <!-- 细胞计数按钮和显微镜倍率选择 -->
                 <div class="button-row">
                     <button id="cell_count" class="btn" onclick="cellCount()">
                         <i class="fas fa-microscope"></i><br>细胞计数
+                    </button>
+                    <button id="magnification" class="btn magnification-btn" onclick="cycleMagnification()">
+                        <i class="fas fa-search-plus"></i><br><span class="magnification-label">物镜倍率</span><br><span id="magnification-text">40倍</span>
                     </button>
                 </div>
                 

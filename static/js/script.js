@@ -55,6 +55,32 @@ socket.on('cam1_mode_response', function(data) {
     }
 });
 
+// 显微镜倍率相关变量和函数（全局定义，确保在任何事件处理之前就可用）
+window.currentMagnificationIndex = 2; // 默认40倍，索引为2
+window.magnificationValues = [10, 20, 40, 60, 100];
+window.magnificationTexts = ['10倍', '20倍', '40倍', '60倍', '100倍'];
+
+// 更新倍率显示
+function updateMagnificationDisplay() {
+    const magnificationText = document.getElementById('magnification-text');
+    if (magnificationText) {
+        magnificationText.textContent = window.magnificationTexts[window.currentMagnificationIndex];
+    }
+}
+
+// 循环切换倍率函数
+window.cycleMagnification = function() {
+    // 切换到下一个倍率
+    window.currentMagnificationIndex = (window.currentMagnificationIndex + 1) % window.magnificationValues.length;
+    const newMagnification = window.magnificationValues[window.currentMagnificationIndex];
+    
+    // 更新显示
+    updateMagnificationDisplay();
+    
+    // 发送SocketIO事件来更新显微镜倍率
+    socket.emit('set_magnification', { magnification: newMagnification });
+};
+
 // Settings update
 socket.on('settings_update', function(settings) {
     console.log('Received settings_update:', settings);
@@ -883,31 +909,8 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // 显微镜倍率循环切换功能
-    window.currentMagnificationIndex = 2; // 默认40倍，索引为2
-    window.magnificationValues = [10, 20, 40, 60, 100];
-    window.magnificationTexts = ['10倍', '20倍', '40倍', '60倍', '100倍'];
-    
-    // 更新倍率显示
-    function updateMagnificationDisplay() {
-        const magnificationText = document.getElementById('magnification-text');
-        if (magnificationText) {
-            magnificationText.textContent = window.magnificationTexts[window.currentMagnificationIndex];
-        }
-    }
-    
-    // 循环切换倍率函数
-    window.cycleMagnification = function() {
-        // 切换到下一个倍率
-        window.currentMagnificationIndex = (window.currentMagnificationIndex + 1) % window.magnificationValues.length;
-        const newMagnification = window.magnificationValues[window.currentMagnificationIndex];
-        
-        // 更新显示
-        updateMagnificationDisplay();
-        
-        // 发送SocketIO事件来更新显微镜倍率
-        socket.emit('set_magnification', { magnification: newMagnification });
-    };
+    // 页面加载完成后立即更新倍率显示
+    updateMagnificationDisplay();
     
     // 监听magnification_set事件
     socket.on('magnification_set', function(data) {

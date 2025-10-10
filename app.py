@@ -1577,9 +1577,9 @@ def handle_system_update(data):
             
             updated_count = 0
             
-            # 使用rsync进行文件同步，排除配置文件
+            # 使用rsync进行文件同步，排除配置文件和版本文件
             rsync_result = subprocess.run([
-                'rsync', '-av', '--exclude=settings.json', '--exclude=params.json',
+                'rsync', '-av', '--exclude=settings.json', '--exclude=params.json', '--exclude=version.json',
                 '--exclude=*.pyc', '--exclude=__pycache__/', '--exclude=.git/',
                 repo_path + '/', microscopy_path + '/'
             ], capture_output=True, text=True, timeout=60)
@@ -1619,6 +1619,35 @@ def handle_system_update(data):
                 subprocess.run(['sudo', 'systemctl', 'daemon-reload'], 
                              capture_output=True)
                 send_log_message('系统服务文件已更新', 'info')
+            
+            # 保存更新后的版本号到本地文件
+            try:
+                # 获取最新提交的版本信息
+                latest_commit_result = subprocess.run([
+                    'git', '-C', repo_path, 'log', '-1', '--format=%H|%s|%ad', '--date=short'
+                ], capture_output=True, text=True)
+                
+                if latest_commit_result.returncode == 0:
+                    commit_info = latest_commit_result.stdout.strip().split('|')
+                    new_version = {
+                        'hash': commit_info[0][:8],
+                        'full_hash': commit_info[0],
+                        'message': commit_info[1],
+                        'date': commit_info[2],
+                        'update_time': time.strftime('%Y-%m-%d %H:%M:%S')
+                    }
+                    
+                    # 保存版本信息到本地文件
+                    version_file = os.path.join(microscopy_path, 'version.json')
+                    with open(version_file, 'w', encoding='utf-8') as f:
+                        import json
+                        json.dump(new_version, f, ensure_ascii=False, indent=2)
+                    
+                    send_log_message(f'版本信息已保存: {new_version["hash"]}', 'info')
+                else:
+                    send_log_message('无法获取更新后的版本信息', 'warning')
+            except Exception as version_error:
+                send_log_message(f'保存版本信息失败: {str(version_error)}', 'warning')
             
             # 发送重启通知给前端
             send_log_message('系统更新完成，正在重启服务...', 'info')
@@ -1725,17 +1754,30 @@ def handle_check_update():
                     'date': commit_info[2]
                 }
                 
-                # 获取当前本地版本信息（如果存在）
+                # 获取当前本地版本信息（优先从保存的版本文件读取）
                 local_version = "未知版本"
+                local_version_info = None
+                
                 try:
-                    if os.path.exists('/home/admin/Documents/microscopy/.git'):
-                        local_result = subprocess.run([
-                            'git', '-C', '/home/admin/Documents/microscopy', 'log', '-1', '--format=%H'
-                        ], capture_output=True, text=True)
-                        if local_result.returncode == 0:
-                            local_version = local_result.stdout.strip()[:8]
-                except:
-                    pass
+                    # 首先尝试从本地版本文件读取
+                    version_file = '/home/admin/Documents/microscopy/version.json'
+                    if os.path.exists(version_file):
+                        with open(version_file, 'r', encoding='utf-8') as f:
+                            import json
+                            local_version_info = json.load(f)
+                            local_version = local_version_info.get('hash', '未知版本')
+                            send_log_message(f'从本地文件读取版本: {local_version}', 'info')
+                    else:
+                        # 如果本地文件不存在，尝试从git获取
+                        if os.path.exists('/home/admin/Documents/microscopy/.git'):
+                            local_result = subprocess.run([
+                                'git', '-C', '/home/admin/Documents/microscopy', 'log', '-1', '--format=%H'
+                            ], capture_output=True, text=True)
+                            if local_result.returncode == 0:
+                                local_version = local_result.stdout.strip()[:8]
+                                send_log_message(f'从Git读取版本: {local_version}', 'info')
+                except Exception as e:
+                    send_log_message(f'读取本地版本信息失败: {str(e)}', 'warning')
                 
                 has_update = latest_commit['hash'] != local_version
                 
@@ -1745,7 +1787,8 @@ def handle_check_update():
                     'success': True,
                     'has_update': has_update,
                     'latest_version': latest_commit,
-                    'current_version': local_version
+                    'current_version': local_version,
+                    'current_version_info': local_version_info
                 })
             else:
                 raise Exception("无法获取版本信息")

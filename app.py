@@ -16,6 +16,83 @@ import base64
 import io
 from utils import stitch_images, crop_center_expanding_rect, get_translation_shift, focus_stack, count_cells
 
+
+class ConfigManager:
+    """配置管理类，用于管理所有配置参数"""
+    def __init__(self):
+        self.z_level = 5  # 景深堆叠Z Level参数
+        self.show_xyz = False  # 控制XYZ估算位置曲线的显示
+        self.recording_interval = 0  # 拍摄间隔时间（秒）
+        self.is_recording = False
+        self.is_recording_cam1 = False
+        self.is_veiwing = True
+        self.move_task = False
+        
+        # 辅助摄像头录制相关
+        self.video_writer = None
+        self.video_writer_cam1 = None
+        self.current_video_filename_cam1 = None
+        self.cam1_previous_frame = None
+        self.cam1_motion_detected = False
+        self.cam1_last_motion_time = 0
+        self.cam1_motion_threshold = 0.5
+        self.cam1_motion_cooldown = 2.0
+        
+        # 定期清理缓存文件
+        self.cleanup_interval = 3600  # 每小时清理一次（秒）
+    
+    def load_settings(self):
+        """加载设置文件"""
+        try:
+            with open('/home/admin/Documents/microscopy/settings.json', 'r') as f:
+                settings = json.load(f)
+                cam0.exposure_time = int(settings['exposure_value']*1000)
+                cam0.analogue_gain = settings['gain_value']
+                cam0.r_gain = settings['r_value']
+                cam0.b_gain = settings['b_value']
+                motor0.led_cycle0 = int(settings.get('led_value_0', 10))
+                motor0.set_led_power0()
+                motor0.led_cycle1 = int(settings.get('led_value_1', 10))
+                motor0.set_led_power1()
+                # 读取校准的步数值，如果不存在则使用默认值1500
+                cam0.pixel_size = settings.get('pixel_size', 0.09)
+                print(f"Loaded pixel_size: {cam0.pixel_size}")
+                # 读取显微镜倍率，如果不存在则使用默认值40
+                cam0.mag_scale = settings.get('magnification', 40)
+                print(f"Loaded magnification: {cam0.mag_scale}")
+                # 读取景深堆叠Z Level参数，如果不存在则使用默认值5
+                self.z_level = settings.get('z_level', 5)
+                print(f"Loaded z_level: {self.z_level}")
+            return settings
+        except FileNotFoundError:
+            print("Settings file not found. Using default settings.")
+            return {}  # 如果文件不存在，返回空字典或默认设置
+    
+    def save_settings(self):
+        """保存设置到文件"""
+        try:
+            settings = {
+                'exposure_value': cam0.exposure_time/1000,
+                'gain_value': cam0.analogue_gain,
+                'led_value_0': motor0.led_cycle0,
+                'led_value_1': motor0.led_cycle1,
+                'r_value': cam0.r_gain,
+                'b_value': cam0.b_gain,
+                'steps_per_mm': motor0.steps_per_mm,
+                'magnification': cam0.mag_scale,  # 保存显微镜倍率
+                'z_level': self.z_level,  # 保存景深堆叠Z Level参数
+            }
+            with open('/home/admin/Documents/microscopy/settings.json', 'w') as f:
+                json.dump(settings, f)
+            return True
+        except Exception as e:
+            print(f"Error saving settings: {e}")
+            return False
+
+
+# 创建全局配置管理器实例
+config = ConfigManager()
+
 imx477_dict = {
     "preview_size": (1014, 760),  # 预览分辨率
     "video_size": (2028, 1520),   # 视频分辨率
@@ -47,28 +124,6 @@ cam1.apply_perspective = False
 
 
 motor0 = motor()
-# 控制录像状态
-is_recording = False
-video_writer = None
-is_veiwing = True # 控制摄像头是否在运行
-move_task = False
-recording_interval = 0  # 拍摄间隔时间（秒），0表示不进行间隔拍摄
-
-# 控制前端图表显示
-show_xyz = False  # 控制XYZ估算位置曲线的显示，False时隐藏估算曲线，只保留实线位置曲线
-
-# 辅助摄像头录制状态
-is_recording_cam1 = False
-video_writer_cam1 = None
-current_video_filename_cam1 = None
-cam1_previous_frame = None
-cam1_motion_detected = False
-cam1_last_motion_time = 0
-cam1_motion_threshold = 0.5  # 运动检测阈值
-cam1_motion_cooldown = 2.0  # 运动检测冷却时间（秒）
-
-# 定期清理缓存文件
-cleanup_interval = 3600  # 每小时清理一次（秒）
 
 # 存储照片和录像的目录
 SAVE_DIR = '/home/admin/Documents/microscopy/static'
@@ -88,16 +143,15 @@ def generate_frames():
     """
     不采用全速写入的方式，微观领域帧率不是关键因素
     """
-    global is_veiwing
     cam0.__stop__()
     time.sleep(0.5)
     cam0.preview_config()
     time.sleep(0.5)
-    pbar = tqdm(total=0, dynamic_ncols=True)
+    # pbar = tqdm(total=0, dynamic_ncols=True)
     max_sharpness, z_pos_array, sharp_array = 0, [], []
     motor0.focus_get = False
-    while is_veiwing := True:
-        frame, rgb = cam0.get_frame(awb=True)  #rgb图片是用于视频写入保存，为视频分辨率
+    while config.is_veiwing:
+        frame, rgb = cam0.get_frame(awb=True, crap=False)  #rgb图片是用于视频写入保存，为视频分辨率
         frame_sharpness = len(frame)
         if queues_dict['rgb'].empty():queues_dict['rgb'].put(rgb)
         if queues_dict['frame_len'].empty():queues_dict['frame_len'].put(frame_sharpness)
@@ -130,7 +184,7 @@ def generate_frames():
             
         yield (b'--frame\r\n'
                 b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
-        pbar.update(1)  # 更新进度条
+        # pbar.update(1)  # 更新进度条
 
 
 # 开启cam1摄像头预览
@@ -138,15 +192,14 @@ def generate_frames_cam1():
     """
     cam1的视频流生成函数
     """
-    global is_veiwing
     cam1.__stop__()
     time.sleep(0.5)
     cam1.exposure_time = 20000
     cam1.preview_config()
     time.sleep(0.5)
-    pbar = tqdm(total=0, dynamic_ncols=True)
-    while is_veiwing := True:
-        frame, rgb = cam1.get_frame(awb=False, flip=True, to_bgr=True)
+    # pbar = tqdm(total=0, dynamic_ncols=True)
+    while config.is_veiwing:
+        frame, rgb = cam1.get_frame(awb=False, flip=True, to_bgr=True, crap=False)
         if queues_dict['cam1_rgb'].empty():queues_dict['cam1_rgb'].put(rgb)
         # Send frame via SocketIO for real-time streaming
         try:
@@ -158,43 +211,39 @@ def generate_frames_cam1():
             
         yield (b'--frame\r\n'
                 b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
-        pbar.update(1)  # 更新进度条
+        # pbar.update(1)  # 更新进度条
 
 
 # 录制视频
 def record_video():
-    global is_recording, video_writer, current_video_filename, recording_interval
     rgb = queues_dict['rgb'].get()
     time.sleep(0.1)  # 等待队列中的数据稳定
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
     timestamp = time.strftime("%Y%m%d-%H%M%S")
     current_video_filename = os.path.join(SAVE_DIR, f'{timestamp}.avi')
-    video_writer = cv2.VideoWriter(current_video_filename, fourcc, imx477_dict["frame_rate"], cam0.video_size, isColor=True)
+    config.video_writer = cv2.VideoWriter(current_video_filename, fourcc, imx477_dict["frame_rate"], cam0.video_size, isColor=True)
     i, max_frame = 0, 20000
-    while is_recording or not queues_dict['rgb'].empty():
+    while config.is_recording or not queues_dict['rgb'].empty():
         rgb = queues_dict['rgb'].get()
         bgr = cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB, rgb)  # 写入图象时，会替换通道
 
         if i < max_frame:
-            if recording_interval > 0 :
-                time.sleep(recording_interval)
-            video_writer.write(bgr)
+            if config.recording_interval > 0 :
+                time.sleep(config.recording_interval)
+            config.video_writer.write(bgr)
         else:
-            is_recording = False
+            config.is_recording = False
         i += 1
-    video_writer.release()
+    config.video_writer.release()
 
 
 def record_video_cam1():
     """辅助摄像头动态录制函数"""
-    global is_recording_cam1, video_writer_cam1, current_video_filename_cam1
-    global cam1_previous_frame, cam1_motion_detected, cam1_last_motion_time
-    
     # 初始化视频写入器
     fourcc = cv2.VideoWriter_fourcc(*'XVID')
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    current_video_filename_cam1 = os.path.join(SAVE_DIR, f'cam1_{timestamp}.avi')
-    video_writer_cam1 = cv2.VideoWriter(current_video_filename_cam1, fourcc, 10, cam1.video_size, isColor=True)
+    config.current_video_filename_cam1 = os.path.join(SAVE_DIR, f'cam1_{timestamp}.avi')
+    config.video_writer_cam1 = cv2.VideoWriter(config.current_video_filename_cam1, fourcc, 10, cam1.video_size, isColor=True)
     
     send_log_message('辅助摄像头录制已开始', 'info')
     # 只选择图像视野中心1/4区域进行运动检测
@@ -209,7 +258,7 @@ def record_video_cam1():
     roi_y1 = center_y - roi_height // 2
     roi_x2 = center_x + roi_width // 2
     roi_y2 = center_y + roi_height // 2
-    while is_recording_cam1 or not queues_dict['cam1_rgb'].empty():
+    while config.is_recording_cam1 or not queues_dict['cam1_rgb'].empty():
         try:
             # 获取当前帧
             rgb = queues_dict['cam1_rgb'].get()
@@ -219,13 +268,13 @@ def record_video_cam1():
             gray = cv2.GaussianBlur(gray, (21, 21), 0)
             
             # 运动检测
-            if cam1_previous_frame is not None:
+            if config.cam1_previous_frame is not None:
                 
                 # 提取当前帧的中心1/4区域
                 current_roi = gray[roi_y1:roi_y2, roi_x1:roi_x2]
                 
                 # 提取前一帧的中心1/4区域
-                prev_roi = cam1_previous_frame[roi_y1:roi_y2, roi_x1:roi_x2]
+                prev_roi = config.cam1_previous_frame[roi_y1:roi_y2, roi_x1:roi_x2]
                 
                 # 计算帧差
                 frame_delta = cv2.absdiff(prev_roi, current_roi)
@@ -238,77 +287,55 @@ def record_video_cam1():
                 
                 current_time = time.time()
                 # 检测到运动
-                if motion_ratio > cam1_motion_threshold:
-                    cam1_motion_detected = True
-                    cam1_last_motion_time = current_time
+                if motion_ratio > config.cam1_motion_threshold:
+                    config.cam1_motion_detected = True
+                    config.cam1_last_motion_time = current_time
                     # 以10fps录制
                     bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-                    video_writer_cam1.write(bgr)
+                    config.video_writer_cam1.write(bgr)
                     time.sleep(0.1)  # 100ms间隔，10fps
                     # 发送运动检测状态
                     socketio.emit('motion_status', {'motion_detected': True, 'ratio': round(motion_ratio, 2)})
                 else:
                     # 检查是否在冷却期内
-                    if current_time - cam1_last_motion_time < cam1_motion_cooldown:
+                    if current_time - config.cam1_last_motion_time < config.cam1_motion_cooldown:
                         # 冷却期内继续以10fps录制
                         bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-                        video_writer_cam1.write(bgr)
+                        config.video_writer_cam1.write(bgr)
                         time.sleep(0.1)
                     else:
                         # 冷却期后以1fps录制
-                        if cam1_motion_detected:
+                        if config.cam1_motion_detected:
                             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-                            video_writer_cam1.write(bgr)
+                            config.video_writer_cam1.write(bgr)
                             time.sleep(1.0)  # 1秒间隔，1fps
-                            cam1_motion_detected = False
+                            config.cam1_motion_detected = False
                         else:
                             # 没有运动时也以1fps录制
                             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-                            video_writer_cam1.write(bgr)
+                            config.video_writer_cam1.write(bgr)
                             time.sleep(1.0)
             else:
                 # 第一帧，直接写入
                 bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-                video_writer_cam1.write(bgr)
+                config.video_writer_cam1.write(bgr)
                 time.sleep(0.1)
             
             # 更新前一帧
-            cam1_previous_frame = gray.copy()
+            config.cam1_previous_frame = gray.copy()
             
         except Exception as e:
             print(f"Cam1 recording error: {e}")
             time.sleep(0.1)
     
     # 录制结束，释放资源
-    if video_writer_cam1 is not None:
-        video_writer_cam1.release()
-        video_writer_cam1 = None
+    if config.video_writer_cam1 is not None:
+        config.video_writer_cam1.release()
+        config.video_writer_cam1 = None
     
     send_log_message('辅助摄像头录制已停止', 'info')
 
 
-def load_settings():
-    try:
-        with open('/home/admin/Documents/microscopy/settings.json', 'r') as f:
-            settings = json.load(f)
-            cam0.exposure_time = int(settings['exposure_value']*1000)
-            cam0.analogue_gain = settings['gain_value']
-            cam0.r_gain = settings['r_value']
-            cam0.b_gain = settings['b_value']
-            motor0.led_cycle0 = int(settings.get('led_value_0', 10))
-            motor0.set_led_power0()
-            motor0.led_cycle1 = int(settings.get('led_value_1', 10))
-            motor0.set_led_power1()
-            # 读取校准的步数值，如果不存在则使用默认值1500
-            cam0.pixel_size = settings.get('pixel_size', 0.09)
-            print(f"Loaded pixel_size: {cam0.pixel_size}")
-            # 读取显微镜倍率，如果不存在则使用默认值40
-            cam0.mag_scale = settings.get('magnification', 40)
-            print(f"Loaded magnification: {cam0.mag_scale}")
-        return settings
-    except FileNotFoundError:
-        print("Settings file not found. Using default settings.")
-        return {}  # 如果文件不存在，返回空字典或默认设置
 
 
 def arctan_func(x, A, B, C, D):
@@ -321,7 +348,7 @@ def handle_connect():
     send_log_message('客户端已连接', 'success')
     # Load motor positions and send initial settings to client
     # motor_positions = load_motor_positions()
-    settings = load_settings()
+    settings = config.load_settings()
     x_vol = motor0.measure_voltage('X')
     y_vol = motor0.measure_voltage('Y')
     z_vol = motor0.measure_voltage('Z')
@@ -341,8 +368,9 @@ def handle_connect():
         'x_pos': round(motor0.x_pos / motor0.steps_per_mm, 2),  # Convert steps to mm
         'y_pos': round(motor0.y_pos / motor0.steps_per_mm, 2),
         'z_pos': round(motor0.z_pos / motor0.steps_per_mm, 2),
-        'show_xyz': show_xyz,  # 添加show_xyz变量到初始数据中
-        'magnification': cam0.mag_scale  # 添加显微镜倍率到初始数据中
+        'show_xyz': config.show_xyz,  # 添加show_xyz变量到初始数据中
+        'magnification': cam0.mag_scale,  # 添加显微镜倍率到初始数据中
+        'z_level': config.z_level  # 添加景深堆叠Z Level参数到初始数据中
     }
     emit('settings_update', initial_data)
 
@@ -351,15 +379,14 @@ def handle_connect():
 def handle_disconnect():
     print('Client disconnected')
     send_log_message('客户端已断开连接', 'warning')
-    global is_veiwing, is_recording, video_writer, is_recording_cam1, video_writer_cam1
     """断开连接时，停止所有功能"""
-    is_veiwing = False
-    is_recording = False
-    is_recording_cam1 = False
-    if video_writer is not None:
-        video_writer.release()
-    if video_writer_cam1 is not None:
-        video_writer_cam1.release()
+    config.is_veiwing = False
+    config.is_recording = False
+    config.is_recording_cam1 = False
+    if config.video_writer is not None:
+        config.video_writer.release()
+    if config.video_writer_cam1 is not None:
+        config.video_writer_cam1.release()
     cam0.__stop__() # 停止摄像头
     cam1.__stop__() # 停止cam1摄像头
     motor0.status = False
@@ -372,7 +399,7 @@ def handle_disconnect():
 
 @socketio.on('get_settings')
 def handle_get_settings():
-    settings = load_settings()
+    settings = config.load_settings()
     emit('settings_update', settings)
 
 
@@ -433,36 +460,38 @@ def handle_capture_cam1():
 
 @socketio.on('start_recording')
 def handle_start_recording(data=None):
-    global is_recording, recording_interval, is_recording_cam1
-    if not is_recording:
+    if not config.is_recording:
         # 检查辅助摄像头是否正在录制
-        if is_recording_cam1:
+        if config.is_recording_cam1:
             emit('recording_status', {'recording': False, 'message': '辅助摄像头正在录制中，请先停止辅助摄像头录制', 'error': True})
             return
         
         # Get the current recording interval from frontend if provided
         if data and 'interval' in data:
-            recording_interval = float(data['interval'])
+            config.recording_interval = float(data['interval'])
         
-        is_recording = True
+        config.is_recording = True
         threading.Thread(target=record_video).start()
         
         # 如果设置了间隔录制，显示间隔信息
-        if recording_interval > 0:
-            interval_info = f"Recording started with interval frames every {recording_interval} seconds"
+        if config.recording_interval > 0:
+            interval_info = f"Recording started with interval frames every {config.recording_interval} seconds"
         else:
             interval_info = "Recording started"
             
-        emit('recording_status', {'recording': True, 'message': interval_info, 'interval': recording_interval})
+        emit('recording_status', {'recording': True, 'message': interval_info, 'interval': config.recording_interval})
     else:
         emit('recording_status', {'recording': True, 'message': 'Recording already in progress'})
 
 
 @socketio.on('stop_recording')
 def handle_stop_recording():
-    global is_recording, current_video_filename
-    if is_recording:
-        is_recording = False
+    if config.is_recording:
+        config.is_recording = False
+        # 需要从record_video函数中获取文件名，这里暂时使用一个通用的方法
+        # 在实际应用中，可能需要将文件名也存储在config中
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        current_video_filename = os.path.join(SAVE_DIR, f'{timestamp}.avi')
         if os.path.exists(current_video_filename):
             size = os.path.getsize(current_video_filename)
             print(current_video_filename, size)
@@ -483,14 +512,13 @@ def handle_stop_recording():
 
 @socketio.on('start_recording_cam1')
 def handle_start_recording_cam1():
-    global is_recording_cam1, is_recording
-    if not is_recording_cam1:
+    if not config.is_recording_cam1:
         # 检查主摄像头是否正在录制
-        if is_recording:
+        if config.is_recording:
             emit('recording_cam1_status', {'recording': False, 'message': '主摄像头正在录制中，请先停止主摄像头录制', 'error': True})
             return
         
-        is_recording_cam1 = True
+        config.is_recording_cam1 = True
         threading.Thread(target=record_video_cam1).start()
         emit('recording_cam1_status', {'recording': True, 'message': '辅助摄像头录制已开始'})
     else:
@@ -499,20 +527,19 @@ def handle_start_recording_cam1():
 
 @socketio.on('stop_recording_cam1')
 def handle_stop_recording_cam1():
-    global is_recording_cam1, current_video_filename_cam1
-    if is_recording_cam1:
-        is_recording_cam1 = False
+    if config.is_recording_cam1:
+        config.is_recording_cam1 = False
         time.sleep(0.5)  # 等待录制线程结束
         
-        if os.path.exists(current_video_filename_cam1):
-            size = os.path.getsize(current_video_filename_cam1)
-            print(f"Cam1 video: {current_video_filename_cam1}, size: {size}")
+        if os.path.exists(config.current_video_filename_cam1):
+            size = os.path.getsize(config.current_video_filename_cam1)
+            print(f"Cam1 video: {config.current_video_filename_cam1}, size: {size}")
             # Send file as base64
-            with open(current_video_filename_cam1, 'rb') as f:
+            with open(config.current_video_filename_cam1, 'rb') as f:
                 file_data = base64.b64encode(f.read()).decode('utf-8')
             emit('recording_cam1_response', {
                 'success': True,
-                'filename': os.path.basename(current_video_filename_cam1),
+                'filename': os.path.basename(config.current_video_filename_cam1),
                 'data': file_data
             })
         else:
@@ -640,9 +667,8 @@ def handle_focus_stack():
         
         # 保存当前Z位置
         original_z = motor0.z_pos
-        mag_scale = 40/cam0.mag_scale
         # 计算Z轴移动步长（每张图片间隔0.02mm，总共覆盖0.08mm景深）
-        step_z_size = int(5*mag_scale)  # 0.02mm步长
+        step_z_size = int(config.z_level*2)  # 使用config.z_level参数
         z_positions = [-3*step_z_size, -2*step_z_size, -step_z_size, 0, step_z_size, 2*step_z_size, 3*step_z_size]  # 7个位置
         
         for i, dz in enumerate(z_positions):
@@ -659,18 +685,15 @@ def handle_focus_stack():
             rgb = cam0.capture_config()
             rgb[:,:,0] = rgb[:,:,0] * cam0.r_gain
             rgb[:,:,2] = rgb[:,:,2] * cam0.b_gain
+            # 恢复预览模式
             
             # 转换为BGR格式（OpenCV格式）
             bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-            bgr = cv2.medianBlur(bgr, 1)
-            # bgr = cv2.GaussianBlur(bgr, (3, 3), 0)
             images.append(bgr)
-            
-            # 恢复预览模式
-            cam0.preview_config()
             
             # 发送进度更新
             emit('focus_stack_progress', {'current': i+1, 'total': len(z_positions)})
+        cam0.preview_config()
         
         # 恢复原始Z位置
         motor0.direction = 'Z'
@@ -680,12 +703,7 @@ def handle_focus_stack():
         
         # 景深堆叠处理
         send_log_message('正在处理景深堆叠...', 'info')
-        stacked_image = focus_stack(images)
-        # 1. 先中值滤波去除孤立杂点
-        # stacked_image = cv2.medianBlur(stacked_image, 5)
-
-        # # 2. 再用非局部均值（适合彩图/高分辨率）
-        # stacked_image = cv2.fastNlMeansDenoisingColored(stacked_image, None, h=10, hColor=10, templateWindowSize=7, searchWindowSize=21)
+        stacked_image, depthmap_image = focus_stack(images)
 
         if stacked_image is not None:
             # 生成景深堆叠后的图像文件名
@@ -1123,11 +1141,10 @@ def handle_set_b_bal(data):
 @socketio.on('toggle_show_xyz')
 def handle_toggle_show_xyz(data):
     """切换XYZ估算位置曲线的显示状态"""
-    global show_xyz
     try:
-        show_xyz = bool(data.get('show_xyz', False))
-        send_log_message(f'位置调试模式已{"开启" if show_xyz else "关闭"}', 'info')
-        emit('show_xyz_toggled', {'status': 'success', 'show_xyz': show_xyz})
+        config.show_xyz = bool(data.get('show_xyz', False))
+        send_log_message(f'位置调试模式已{"开启" if config.show_xyz else "关闭"}', 'info')
+        emit('show_xyz_toggled', {'status': 'success', 'show_xyz': config.show_xyz})
     except Exception as e:
         send_log_message(f'切换位置调试模式失败: {str(e)}', 'error')
         emit('show_xyz_toggled', {'status': 'error', 'message': str(e)})
@@ -1201,45 +1218,43 @@ def handle_set_cam1_mode(data):
 
 @socketio.on('set_recording_delay')
 def handle_set_recording_delay(data):
-    global recording_interval
     try:
-        recording_interval = float(data['value'])
+        config.recording_interval = float(data['value'])
         emit('recording_delay_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
         emit('recording_delay_set', {'status': 'error', 'message': str(e)})
 
 
+@socketio.on('set_z_level')
+def handle_set_z_level(data):
+    try:
+        config.z_level = int(data['value'])
+        emit('z_level_set', {'status': 'success', 'value': data['value']})
+    except Exception as e:
+        emit('z_level_set', {'status': 'error', 'message': str(e)})
+
+
 @socketio.on('save_config')
 def handle_save_config():
     try:
-        settings = {
-            'exposure_value': cam0.exposure_time/1000,
-            'gain_value': cam0.analogue_gain,
-            'led_value_0': motor0.led_cycle0,
-            'led_value_1': motor0.led_cycle1,
-            'r_value': cam0.r_gain,
-            'b_value': cam0.b_gain,
-            'steps_per_mm': motor0.steps_per_mm,
-            'magnification': cam0.mag_scale,  # 保存显微镜倍率
-        }
-        with open('/home/admin/Documents/microscopy/settings.json', 'w') as f:
-            json.dump(settings, f)
-        emit('config_saved', {'status': 'success', 'message': 'Configuration saved'})
+        if config.save_settings():
+            emit('config_saved', {'status': 'success', 'message': 'Configuration saved'})
+        else:
+            emit('config_saved', {'status': 'error', 'message': 'Failed to save configuration'})
     except Exception as e:
         emit('config_saved', {'status': 'error', 'message': str(e)})
 
 
 @socketio.on('close')
 def handle_close():
-    global is_veiwing, is_recording, video_writer, is_recording_cam1, video_writer_cam1
     """用户关闭网页时，停止所有功能"""
-    is_veiwing = False
-    is_recording = False
-    is_recording_cam1 = False
-    if video_writer is not None:
-        video_writer.release()
-    if video_writer_cam1 is not None:
-        video_writer_cam1.release()
+    config.is_veiwing = False
+    config.is_recording = False
+    config.is_recording_cam1 = False
+    if config.video_writer is not None:
+        config.video_writer.release()
+    if config.video_writer_cam1 is not None:
+        config.video_writer_cam1.release()
     cam0.__stop__() # 停止摄像头
     cam1.__stop__() # 停止cam1摄像头
     motor0.status = False
@@ -1810,21 +1825,19 @@ def index():
 
 @app.route('/video_feed')
 def video_feed():
-    global is_veiwing
-    is_veiwing = True  # 开始视频流
+    config.is_veiwing = True  # 开始视频流
     return Response(generate_frames(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
 @app.route('/video_feed_cam1')
 def video_feed_cam1():
-    global is_veiwing
-    is_veiwing = True  # 开始视频流
+    config.is_veiwing = True  # 开始视频流
     return Response(generate_frames_cam1(), mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
 @app.route('/api/settings', methods=['GET'])
 def get_settings():
-    settings = load_settings()
+    settings = config.load_settings()
     return jsonify(settings)
 
 

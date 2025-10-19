@@ -21,6 +21,7 @@ class VideoCamera(object):
         self.cam1_params, self.cam1_output_size = load_fused_perspective_transform('/home/admin/Documents/microscopy/fused_perspective_transform_params.json')
         self.apply_perspective = False
         self.mag_scale = 40
+        self.normalize_intensity = False  # 强度归一化开关
 
 
     def __stop__(self):
@@ -98,7 +99,7 @@ class VideoCamera(object):
             controls.FrameDurationLimits = (frame_duration, frame_duration)  # 固定为self.framerate
 
 
-    def get_frame(self, awb=True, flip=False, to_bgr=False, ):
+    def get_frame(self, awb=True, flip=False, to_bgr=False, crap=True):
         """
         用于产生视频预览和保存的图像
         """
@@ -121,7 +122,14 @@ class VideoCamera(object):
             # TO-DO视频录制失败
         else:
             if rgb.shape[0] > self.preview_size[0]:  #默认是video_size采集图像
-                rgb_preview = cv2.resize(rgb, self.preview_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
+                if crap:
+                    # 计算中心区域的起始位置
+                    start_y = (rgb.shape[0] - self.preview_size[0]) // 2
+                    start_x = (rgb.shape[1] - self.preview_size[1]) // 2
+                    # 截取中心区域
+                    rgb_preview = rgb[start_y:start_y + self.preview_size[0], start_x:start_x + self.preview_size[1]]
+                else:
+                    rgb_preview = cv2.resize(rgb, self.preview_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
             else:
                 rgb_preview = rgb
 

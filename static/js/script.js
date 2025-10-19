@@ -143,6 +143,10 @@ socket.on('settings_update', function(settings) {
         document.getElementById('z_value').textContent = `Z目标位置：${settings.z_pos} mm`;
         document.getElementById('z_current').textContent = `当前位置：${settings.z_pos} mm`;
     }
+    if (settings.z_level !== undefined) {
+        document.getElementById('z_level').value = settings.z_level;
+        document.getElementById('z_level_value').textContent = `景深堆叠Z Level：${settings.z_level} 微米`;
+    }
 });
 
 // Capture response
@@ -753,7 +757,8 @@ function updateValueAndSend(slider, valueElement, eventName, unit) {
         'set_z_pos': 'Z目标位置',
         'set_r_bal': '白平衡红色增益',
         'set_b_bal': '白平衡蓝色增益',
-        'set_recording_delay': '间隔录制'
+        'set_recording_delay': '间隔录制',
+        'set_z_level': '景深堆叠Z Level'
     };
     
     label = labelMap[eventName] || eventName;
@@ -803,6 +808,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const bSlider = document.getElementById('b_bal');
 
     const delaySlider = document.getElementById('delay');
+    const zLevelSlider = document.getElementById('z_level');
 
     const x_pos_Value = document.getElementById('x_value');
     const y_pos_Value = document.getElementById('y_value');
@@ -817,6 +823,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const bValue = document.getElementById('b_value');
 
     const delayValue = document.getElementById('delay_value');
+    const zLevelValue = document.getElementById('z_level_value');
 
     // Add event listeners for sliders
     if (x_pos_Slider && x_pos_Value) {
@@ -851,6 +858,10 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (delaySlider && delayValue) {
         delaySlider.addEventListener('input', () => updateValueAndSend(delaySlider, delayValue, 'set_recording_delay', ' 秒'));
+    }
+
+    if (zLevelSlider && zLevelValue) {
+        zLevelSlider.addEventListener('input', () => updateValueAndSend(zLevelSlider, zLevelValue, 'set_z_level', ' 微米'));
     }
 
     // Add click handler to indicator - 只用于显示状态，不触发功能

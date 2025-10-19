@@ -673,6 +673,27 @@ function save_config() {
     socket.emit('save_config');
 }
 
+// Z轴微调函数
+function adjustZ(delta) {
+    const zSlider = document.getElementById('z_pos');
+    if (zSlider) {
+        let currentValue = parseFloat(zSlider.value);
+        let newValue = currentValue + delta;
+        
+        // 确保新值在滑块范围内
+        const min = parseFloat(zSlider.min);
+        const max = parseFloat(zSlider.max);
+        newValue = Math.max(min, Math.min(max, newValue));
+        
+        // 设置新值并触发input事件
+        zSlider.value = newValue.toFixed(3);
+        
+        // 触发input事件，复用现有的后端调用
+        const event = new Event('input', { bubbles: true });
+        zSlider.dispatchEvent(event);
+    }
+}
+
 function stitch_images() {
     socket.emit('stitch_images');
 }

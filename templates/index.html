@@ -112,21 +112,31 @@
                     <span id="x_value" class="slider-value">X目标位置：0.00 mm</span>
                     <span id="x_current" class="current-position">当前位置：0.000 mm</span>
                 </div>
-                <input type="range" id="x_pos" min="0" max="12" step="0.01" value="0">
+                <input type="range" id="x_pos" min="0" max="18" step="0.01" value="0">
 
                 <!-- Y方向 -->
                 <div class="position-row">
                     <span id="y_value" class="slider-value">Y目标位置：0.00 mm</span>
                     <span id="y_current" class="current-position">当前位置：0.000 mm</span>
                 </div>
-                <input type="range" id="y_pos" min="0" max="12" step="0.01" value="0">
+                <input type="range" id="y_pos" min="0" max="18" step="0.01" value="0">
 
                 <!-- Z方向 -->
                 <div class="position-row">
                     <span id="z_value" class="slider-value">Z目标位置：0.000 mm</span>
                     <span id="z_current" class="current-position">当前位置：0.000 mm</span>
                 </div>
-                <input type="range" id="z_pos" min="0" max="7" step="0.001" value="0">
+                <input type="range" id="z_pos" min="0" max="10" step="0.001" value="0">
+                
+                <!-- Z轴微调按钮 -->
+                <div class="z-fine-tune">
+                    <button class="fine-tune-btn" onclick="adjustZ(-0.001)">
+                        <i class="fas fa-chevron-left"></i> -0.001mm
+                    </button>
+                    <button class="fine-tune-btn" onclick="adjustZ(0.001)">
+                        <i class="fas fa-chevron-right"></i> +0.001mm
+                    </button>
+                </div>
             </div>
 
             <div class="control-section">

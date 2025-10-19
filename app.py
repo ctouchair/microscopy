@@ -78,7 +78,8 @@ class ConfigManager:
                 'led_value_1': motor0.led_cycle1,
                 'r_value': cam0.r_gain,
                 'b_value': cam0.b_gain,
-                'steps_per_mm': motor0.steps_per_mm,
+                'xy_steps_per_mm': motor0.xy_steps_per_mm,
+                'z_steps_per_mm': motor0.z_steps_per_mm,
                 'magnification': cam0.mag_scale,  # 保存显微镜倍率
                 'z_level': self.z_level,  # 保存景深堆叠Z Level参数
             }
@@ -357,17 +358,17 @@ def handle_connect():
         f.close()
     params_x = data_params['X']
     params_y = data_params['Y']
-    params_z = data_params['Z']
-    motor0.x_pos = int(arctan_func(x_vol, params_x[0], params_x[1], params_x[2], params_x[3])*motor0.steps_per_mm)
-    motor0.y_pos = int(arctan_func(y_vol, params_y[0], params_y[1], params_y[2], params_y[3])*motor0.steps_per_mm)
-    motor0.z_pos = int(arctan_func(z_vol, params_z[0], params_z[1], params_z[2], params_z[3])*motor0.steps_per_mm)
+    params_z = data_params['Z'] 
+    motor0.x_pos = int(arctan_func(x_vol, params_x[0], params_x[1], params_x[2], params_x[3])*motor0.xy_steps_per_mm)
+    motor0.y_pos = int(arctan_func(y_vol, params_y[0], params_y[1], params_y[2], params_y[3])*motor0.xy_steps_per_mm)
+    motor0.z_pos = int(arctan_func(z_vol, params_z[0], params_z[1], params_z[2], params_z[3])*motor0.z_steps_per_mm)
     print(x_vol, motor0.x_pos)
     # Combine settings with motor positions
     initial_data = {
         **settings,
-        'x_pos': round(motor0.x_pos / motor0.steps_per_mm, 2),  # Convert steps to mm
-        'y_pos': round(motor0.y_pos / motor0.steps_per_mm, 2),
-        'z_pos': round(motor0.z_pos / motor0.steps_per_mm, 2),
+        'x_pos': round(motor0.x_pos / motor0.xy_steps_per_mm, 2),  # Convert steps to mm
+        'y_pos': round(motor0.y_pos / motor0.xy_steps_per_mm, 2),
+        'z_pos': round(motor0.z_pos / motor0.z_steps_per_mm, 2),
         'show_xyz': config.show_xyz,  # 添加show_xyz变量到初始数据中
         'magnification': cam0.mag_scale,  # 添加显微镜倍率到初始数据中
         'z_level': config.z_level  # 添加景深堆叠Z Level参数到初始数据中
@@ -948,12 +949,12 @@ def handle_set_x_pos(data):
         if motor0.status:
             motor0.status = False
             time.sleep(0.01)
-            xdelta_step = int(motor0.steps_per_mm*xpos - motor0.x_pos)  # Convert to int
+            xdelta_step = int(motor0.xy_steps_per_mm*xpos - motor0.x_pos)  # Convert to int
             motor0.status = True
             motor0.move(xdelta_step)
         else:
             motor0.status = True
-            xdelta_step = int(motor0.steps_per_mm*xpos - motor0.x_pos)  # Convert to int
+            xdelta_step = int(motor0.xy_steps_per_mm*xpos - motor0.x_pos)  # Convert to int
             motor0.move(xdelta_step)
         emit('x_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
@@ -968,12 +969,12 @@ def handle_set_y_pos(data):
         if motor0.status:
             motor0.status = False
             time.sleep(0.01)
-            ydelta_step = int(motor0.steps_per_mm*ypos - motor0.y_pos)  # Convert to int
+            ydelta_step = int(motor0.xy_steps_per_mm*ypos - motor0.y_pos)  # Convert to int
             motor0.status = True
             motor0.move(ydelta_step)
         else:
             motor0.status = True
-            ydelta_step = int(motor0.steps_per_mm*ypos - motor0.y_pos)  # Convert to int
+            ydelta_step = int(motor0.xy_steps_per_mm*ypos - motor0.y_pos)  # Convert to int
             motor0.move(ydelta_step)
         emit('y_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
@@ -988,12 +989,12 @@ def handle_set_z_pos(data):
         if motor0.status:
             motor0.status = False
             time.sleep(0.01)
-            zdelta_step = int(motor0.steps_per_mm*zpos - motor0.z_pos)  # Convert to int
+            zdelta_step = int(motor0.z_steps_per_mm*zpos - motor0.z_pos)  # Convert to int
             motor0.status = True
             motor0.move(zdelta_step)
         else:
             motor0.status = True
-            zdelta_step = int(motor0.steps_per_mm*zpos - motor0.z_pos)  # Convert to int
+            zdelta_step = int(motor0.z_steps_per_mm*zpos - motor0.z_pos)  # Convert to int
             motor0.move(zdelta_step)
         emit('z_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
@@ -1090,8 +1091,8 @@ def handle_fast_focus():
                     iterations += 1
                 # print(z2, sharpness2)
         motor0.focus, motor0.focus_get = False, False  # 对焦结束
-        send_log_message(f'对焦完成 - 位置: {motor0.z_pos/motor0.steps_per_mm:.3f} mm', 'success')
-        emit('focus_complete', {'status': 'success', 'position': motor0.z_pos/motor0.steps_per_mm})
+        send_log_message(f'对焦完成 - 位置: {motor0.z_pos/motor0.z_steps_per_mm:.3f} mm', 'success')
+        emit('focus_complete', {'status': 'success', 'position': motor0.z_pos/motor0.z_steps_per_mm})
     except Exception as e:
         emit('focus_complete', {'status': 'error', 'message': str(e)})
 
@@ -1853,9 +1854,9 @@ def send_motor_positions():
     while True:
         try:
             # Convert steps to mm (steps_per_mm steps = 1mm)
-            x_pos_mm = motor0.x_pos / motor0.steps_per_mm
-            y_pos_mm = motor0.y_pos / motor0.steps_per_mm
-            z_pos_mm = motor0.z_pos / motor0.steps_per_mm
+            x_pos_mm = motor0.x_pos / motor0.xy_steps_per_mm
+            y_pos_mm = motor0.y_pos / motor0.xy_steps_per_mm
+            z_pos_mm = motor0.z_pos / motor0.z_steps_per_mm
             
             x_vol = round(motor0.measure_voltage('X'),4)
             y_vol = round(motor0.measure_voltage('Y'),4)
@@ -1877,11 +1878,11 @@ def send_motor_positions():
             })
              # 二者定位差距大时，以电压校准为准，因为螺纹会有回程差，只针对运动时的方向，其他方向不控制
             if abs(x_pos_mm - x_pos_vol_mm) > 0.1 and motor0.direction == 'X':
-                motor0.x_pos = int(x_pos_vol_mm*motor0.steps_per_mm)
+                motor0.x_pos = int(x_pos_vol_mm*motor0.xy_steps_per_mm)
             if abs(y_pos_mm - y_pos_vol_mm) > 0.1 and motor0.direction == 'Y':
-                motor0.y_pos = int(y_pos_vol_mm*motor0.steps_per_mm)
+                motor0.y_pos = int(y_pos_vol_mm*motor0.xy_steps_per_mm)
             if abs(z_pos_mm - z_pos_vol_mm) > 0.1 and motor0.direction == 'Z':
-                motor0.z_pos = int(z_pos_vol_mm*motor0.steps_per_mm)
+                motor0.z_pos = int(z_pos_vol_mm*motor0.z_steps_per_mm)
 
         except Exception as e:
             print(f"Error sending motor positions: {e}")

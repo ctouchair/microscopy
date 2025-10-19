@@ -69,7 +69,8 @@ class motor():
         self.focus = False
         self.focus_pos = 0
         self.focus_get = False
-        self.steps_per_mm = 1450
+        self.xy_steps_per_mm = 1450/1.5
+        self.z_steps_per_mm = 1450
         
         # 默认step_sign值
         self.step_sign_x, self.step_sign_y, self.step_sign_z = -1, -1, 1

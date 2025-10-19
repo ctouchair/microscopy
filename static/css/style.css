@@ -674,6 +674,49 @@ input[type="range"]:focus {
     box-sizing: border-box;
 }
 
+.z-fine-tune {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin-top: 8px;
+    margin-bottom: 12px;
+}
+
+.fine-tune-btn {
+    flex: 1;
+    padding: 8px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #007aff;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(0, 122, 255, 0.3);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+
+.fine-tune-btn:hover {
+    background: rgba(0, 122, 255, 0.1);
+    border-color: rgba(0, 122, 255, 0.5);
+    transform: translateY(-1px);
+    box-shadow: 0 2px 8px rgba(0, 122, 255, 0.2);
+}
+
+.fine-tune-btn:active {
+    transform: translateY(0);
+    box-shadow: 0 1px 3px rgba(0, 122, 255, 0.2);
+}
+
+.fine-tune-btn i {
+    font-size: 14px;
+}
+
 .slider-row {
     display: flex;
     justify-content: space-between;

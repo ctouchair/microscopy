@@ -69,8 +69,13 @@ class motor():
         self.focus = False
         self.focus_pos = 0
         self.focus_get = False
+        
+        # 默认步数参数
         self.xy_steps_per_mm = 1450/1.5
         self.z_steps_per_mm = 1450
+        
+        # 从settings.json读取步数参数
+        self.load_steps_per_mm()
         
         # 默认step_sign值
         self.step_sign_x, self.step_sign_y, self.step_sign_z = -1, -1, 1
@@ -83,6 +88,38 @@ class motor():
         self.pwm0.start(self.led_cycle0) # full duty cycle
         self.pwm1 = HardwarePWM(pwm_channel=1, hz=100, chip=0)  # 0通道对应12，1--13，2--18，3--19
         self.pwm1.start(self.led_cycle1) # full duty cycle
+
+    def load_steps_per_mm(self):
+        """从settings.json文件中读取步数参数"""
+        import json
+        import os
+        
+        settings_file = '/home/admin/Documents/microscopy/settings.json'
+        
+        try:
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                
+                # 读取xy_steps_per_mm参数
+                if 'xy_steps_per_mm' in settings:
+                    self.xy_steps_per_mm = settings['xy_steps_per_mm']
+                    print(f"Loaded xy_steps_per_mm: {self.xy_steps_per_mm}")
+                else:
+                    print("No xy_steps_per_mm found in settings.json, using default value")
+                
+                # 读取z_steps_per_mm参数
+                if 'z_steps_per_mm' in settings:
+                    self.z_steps_per_mm = settings['z_steps_per_mm']
+                    print(f"Loaded z_steps_per_mm: {self.z_steps_per_mm}")
+                else:
+                    print("No z_steps_per_mm found in settings.json, using default value")
+            else:
+                print(f"settings.json not found at {settings_file}, using default steps_per_mm values")
+                
+        except Exception as e:
+            print(f"Error loading steps_per_mm from settings.json: {e}")
+            print("Using default steps_per_mm values")
 
     def load_step_signs(self):
         """从params.json文件中读取step_sign参数"""

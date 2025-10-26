@@ -566,8 +566,8 @@ def handle_stitch_images():
         # 计算移动步长（根据图像分辨率和视野计算）
         # 假设图像视野为0.4mm x 0.3mm，需要50%重叠区域
         # 每张图片移动0.2mm，确保有足够重叠
-        step_x_size = int(1024 * 0.32*mag_scale)  # 0.32mm步长，确保30%重叠
-        step_y_size = int(1024* 0.24*mag_scale)  # 0.24mm步长，确保30%重叠
+        step_x_size = int(motor0.xy_steps_per_mm * 0.28*mag_scale)  # 0.32mm步长，确保30%重叠
+        step_y_size = int(motor0.xy_steps_per_mm * 0.21*mag_scale)  # 0.24mm步长，确保30%重叠
         # 拍摄3x3网格的图片，从左上角开始
         # 贪吃蛇形状运动：左上→右上→右中→右下→中下→中中→中上→左中→左上
         # 每张图片移动步长，确保有足够重叠区域进行拼接
@@ -605,8 +605,8 @@ def handle_stitch_images():
 
             images.append(rgb)
             
-            # 恢复预览模式
-            cam0.preview_config()
+        # 恢复预览模式
+        cam0.preview_config()
         
         # 恢复原始位置
         motor0.direction = 'X'

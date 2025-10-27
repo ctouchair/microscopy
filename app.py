@@ -1289,43 +1289,69 @@ def handle_delete_video(data):
 
 @socketio.on('get_wifi_status')
 def handle_get_wifi_status():
-    """获取当前WiFi连接状态"""
+    """获取当前WiFi连接状态 - 改进版本，与系统WiFi Manager一致"""
     try:
         import subprocess
         import re
         
-        # 获取当前连接的WiFi信息
-        result = subprocess.run(['iwconfig'], capture_output=True, text=True, timeout=10)
-        
         ssid = None
+        ip_address = None
         signal = None
         
-        if result.returncode == 0:
-            # 解析iwconfig输出
-            for line in result.stdout.split('\n'):
-                if 'ESSID:' in line:
-                    essid_match = re.search(r'ESSID:"([^"]*)"', line)
-                    if essid_match:
-                        ssid = essid_match.group(1)
-                elif 'Signal level=' in line:
-                    signal_match = re.search(r'Signal level=(-?\d+)', line)
-                    if signal_match:
-                        signal_dbm = int(signal_match.group(1))
-                        # 转换为百分比 (假设-30dBm为100%, -90dBm为0%)
-                        signal = max(0, min(100, (signal_dbm + 90) * 100 // 60))
-        
-        # 获取WiFi接口的IP地址
+        # 方法1: 使用wpa_cli获取WiFi状态（最可靠）
         try:
-            ip_result = subprocess.run(['sudo', 'ip', 'addr', 'show', 'wlan0'], capture_output=True, text=True, timeout=5)
-            ip_address = None
-            if ip_result.returncode == 0:
-                import re
-                # 查找inet地址
-                ip_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', ip_result.stdout)
-                if ip_match:
-                    ip_address = ip_match.group(1)
-        except Exception:
-            ip_address = None
+            wpa_result = subprocess.run(['wpa_cli', '-i', 'wlan0', 'status'], 
+                                      capture_output=True, text=True, timeout=5)
+            if wpa_result.returncode == 0:
+                for line in wpa_result.stdout.split('\n'):
+                    if line.startswith('ssid='):
+                        ssid_value = line.split('=', 1)[1].strip()
+                        if ssid_value:
+                            ssid = ssid_value
+                    elif line.startswith('ip_address='):
+                        ip_value = line.split('=', 1)[1].strip()
+                        if ip_value:
+                            ip_address = ip_value
+                    elif line.startswith('signal_level='):
+                        signal_dbm = int(line.split('=', 1)[1].strip())
+                        # 转换为百分比
+                        signal = max(0, min(100, (signal_dbm + 90) * 100 // 60))
+        except Exception as e:
+            print(f"Error getting info from wpa_cli: {e}")
+        
+        # 方法2: 如果有IP但没有SSID，尝试从ip命令获取IP
+        if not ip_address:
+            try:
+                ip_result = subprocess.run(['ip', 'addr', 'show', 'wlan0'], 
+                                         capture_output=True, text=True, timeout=5)
+                if ip_result.returncode == 0:
+                    ip_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', ip_result.stdout)
+                    if ip_match:
+                        ip_address = ip_match.group(1)
+            except Exception as e:
+                print(f"Error getting IP: {e}")
+        
+        # 方法3: 如果还没有SSID，尝试从iwconfig获取
+        if not ssid:
+            try:
+                result = subprocess.run(['iwconfig', 'wlan0'], 
+                                      capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    for line in result.stdout.split('\n'):
+                        if 'ESSID:' in line:
+                            essid_match = re.search(r'ESSID:"([^"]*)"', line)
+                            if essid_match:
+                                essid_value = essid_match.group(1)
+                                if essid_value and essid_value.strip():
+                                    ssid = essid_value
+                                    break
+                        elif 'Signal level=' in line and not signal:
+                            signal_match = re.search(r'Signal level=(-?\d+)', line)
+                            if signal_match:
+                                signal_dbm = int(signal_match.group(1))
+                                signal = max(0, min(100, (signal_dbm + 90) * 100 // 60))
+            except Exception as e:
+                print(f"Error getting info from iwconfig: {e}")
         
         emit('wifi_status', {
             'ssid': ssid,
@@ -1434,7 +1460,7 @@ def handle_scan_wifi():
 
 @socketio.on('connect_wifi')
 def handle_connect_wifi(data):
-    """连接到WiFi网络"""
+    """连接到WiFi网络 - 改进版本，使用系统级命令"""
     try:
         ssid = data.get('ssid')
         password = data.get('password', '')
@@ -1447,10 +1473,14 @@ def handle_connect_wifi(data):
             return
         
         send_log_message(f'尝试连接到WiFi: {ssid}', 'info')
+        emit('wifi_connect_result', {
+            'success': 'connecting',
+            'message': '正在连接...'
+        })
         
         import subprocess
-        import tempfile
         import os
+        import tempfile
         
         # 创建wpa_supplicant配置
         if password:
@@ -1474,46 +1504,92 @@ network={{
             temp_config_path = f.name
         
         try:
-            # 停止当前的wpa_supplicant
-            subprocess.run(['sudo', 'killall', 'wpa_supplicant'], 
+            # 方法1: 使用wpa_cli命令（推荐，更可靠）
+            # 先添加网络配置
+            wpa_config_file = '/tmp/wpa_supplicant_new.conf'
+            with open(wpa_config_file, 'w') as f:
+                f.write(wpa_config)
+            
+            # 使用wpa_cli连接到新网络
+            # 先断开当前连接
+            subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'disconnect'], 
+                         capture_output=True, timeout=3)
+            time.sleep(1)
+            
+            # 添加新网络
+            result = subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'add_network'], 
+                                 capture_output=True, text=True, timeout=5)
+            if result.returncode != 0:
+                raise Exception("Failed to add network")
+            
+            network_id = result.stdout.strip()
+            
+            # 设置SSID
+            subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'set_network', 
+                          network_id, 'ssid', f'"{ssid}"'], 
                          capture_output=True, timeout=5)
             
-            # 启动wpa_supplicant with new config
-            subprocess.run(['sudo', 'wpa_supplicant', '-B', '-i', 'wlan0', 
-                          '-c', temp_config_path], 
-                         capture_output=True, timeout=10)
+            # 设置密码
+            if password:
+                subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'set_network', 
+                              network_id, 'psk', f'"{password}"'], 
+                             capture_output=True, timeout=5)
+            else:
+                subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'set_network', 
+                              network_id, 'key_mgmt', 'NONE'], 
+                             capture_output=True, timeout=5)
             
-            # 等待连接
-            time.sleep(3)
+            # 启用并连接网络
+            subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'enable_network', network_id], 
+                         capture_output=True, timeout=5)
+            subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'select_network', network_id], 
+                         capture_output=True, timeout=5)
+            
+            # 保存配置
+            subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'save_config'], 
+                         capture_output=True, timeout=5)
+            
+            # 等待连接建立
+            send_log_message('等待WiFi连接建立...', 'info')
+            for i in range(30):  # 最多等待30秒
+                time.sleep(1)
+                # 检查连接状态
+                status_result = subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'status'], 
+                                              capture_output=True, text=True, timeout=3)
+                if status_result.returncode == 0:
+                    if 'wpa_state=COMPLETED' in status_result.stdout:
+                        send_log_message(f'WiFi已连接: {ssid}', 'success')
+                        break
+                    elif 'wpa_state=FAILED' in status_result.stdout:
+                        raise Exception("WiFi connection failed")
             
             # 获取IP地址
+            send_log_message('获取IP地址...', 'info')
             dhcp_result = subprocess.run(['sudo', 'dhclient', 'wlan0'], 
                                        capture_output=True, timeout=15)
             
-            # 验证连接
             time.sleep(2)
-            ping_result = subprocess.run(['ping', '-c', '1', '8.8.8.8'], 
-                                       capture_output=True, timeout=5)
             
-            if ping_result.returncode == 0:
+            # 验证连接 - 简化验证，只检查IP地址
+            ip_result = subprocess.run(['ip', 'addr', 'show', 'wlan0'], 
+                                      capture_output=True, text=True, timeout=5)
+            has_ip = 'inet ' in ip_result.stdout if ip_result.returncode == 0 else False
+            
+            if has_ip:
                 send_log_message(f'WiFi连接成功: {ssid}', 'success')
-                
-                # 保存配置到系统
-                subprocess.run(['sudo', 'cp', temp_config_path, 
-                              '/etc/wpa_supplicant/wpa_supplicant.conf'], 
-                             capture_output=True)
-                
                 emit('wifi_connect_result', {
                     'success': True,
                     'ssid': ssid
                 })
             else:
-                raise Exception("Network connectivity test failed")
+                raise Exception("Failed to obtain IP address")
                 
         finally:
             # 清理临时文件
             if os.path.exists(temp_config_path):
                 os.unlink(temp_config_path)
+            if os.path.exists(wpa_config_file):
+                os.unlink(wpa_config_file)
         
     except subprocess.TimeoutExpired:
         send_log_message('WiFi连接超时', 'error')

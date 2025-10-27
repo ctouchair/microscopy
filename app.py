@@ -151,6 +151,7 @@ def generate_frames():
     # pbar = tqdm(total=0, dynamic_ncols=True)
     max_sharpness, z_pos_array, sharp_array = 0, [], []
     motor0.focus_get = False
+    frame_counter = 0  # 添加帧计数器用于帧率控制
     while config.is_veiwing:
         frame, rgb = cam0.get_frame(awb=True, crap=False)  #rgb图片是用于视频写入保存，为视频分辨率
         frame_sharpness = len(frame)
@@ -175,13 +176,16 @@ def generate_frames():
             max_sharpness, motor0.focus_get = 0, False
             z_pos_array, sharp_array = [], []
         
-        # Send frame via SocketIO for real-time streaming
-        try:
-            # Convert frame to base64 for SocketIO transmission
-            frame_base64 = base64.b64encode(frame).decode('utf-8')
-            socketio.emit('video_frame', {'frame': frame_base64})
-        except Exception as e:
-            print(f"Error sending frame: {e}")
+        # Send frame via SocketIO for real-time streaming (帧率减半)
+        if frame_counter % 2 == 0:  # 只推送偶数帧，实现帧率减半
+            try:
+                # Convert frame to base64 for SocketIO transmission
+                frame_base64 = base64.b64encode(frame).decode('utf-8')
+                socketio.emit('video_frame', {'frame': frame_base64})
+            except Exception as e:
+                print(f"Error sending frame: {e}")
+        
+        frame_counter += 1
             
         yield (b'--frame\r\n'
                 b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
@@ -199,16 +203,20 @@ def generate_frames_cam1():
     cam1.preview_config()
     time.sleep(0.5)
     # pbar = tqdm(total=0, dynamic_ncols=True)
+    frame_counter_cam1 = 0  # 添加帧计数器用于帧率控制
     while config.is_veiwing:
         frame, rgb = cam1.get_frame(awb=False, flip=True, to_bgr=True, crap=False)
         if queues_dict['cam1_rgb'].empty():queues_dict['cam1_rgb'].put(rgb)
-        # Send frame via SocketIO for real-time streaming
-        try:
-            # Convert frame to base64 for SocketIO transmission
-            frame_base64 = base64.b64encode(frame).decode('utf-8')
-            socketio.emit('video_frame_cam1', {'frame': frame_base64})
-        except Exception as e:
-            print(f"Error sending cam1 frame: {e}")
+        # Send frame via SocketIO for real-time streaming (帧率减半)
+        if frame_counter_cam1 % 2 == 0:  # 只推送偶数帧，实现帧率减半
+            try:
+                # Convert frame to base64 for SocketIO transmission
+                frame_base64 = base64.b64encode(frame).decode('utf-8')
+                socketio.emit('video_frame_cam1', {'frame': frame_base64})
+            except Exception as e:
+                print(f"Error sending cam1 frame: {e}")
+        
+        frame_counter_cam1 += 1
             
         yield (b'--frame\r\n'
                 b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')

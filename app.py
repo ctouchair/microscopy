@@ -1289,7 +1289,7 @@ def handle_delete_video(data):
 
 @socketio.on('get_wifi_status')
 def handle_get_wifi_status():
-    """获取当前WiFi连接状态 - 改进版本，与系统WiFi Manager一致"""
+    """获取当前WiFi连接状态 - 使用iw和nmcli，与系统WiFi Manager一致"""
     try:
         import subprocess
         import re
@@ -1298,64 +1298,48 @@ def handle_get_wifi_status():
         ip_address = None
         signal = None
         
-        # 方法1: 使用wpa_cli获取WiFi状态（最可靠）
+        # 方法1: 使用iw获取WiFi状态（推荐，最准确）
         try:
-            wpa_result = subprocess.run(['wpa_cli', '-i', 'wlan0', 'status'], 
+            iw_result = subprocess.run(['iw', 'dev', 'wlan0', 'link'], 
                                       capture_output=True, text=True, timeout=5)
-            if wpa_result.returncode == 0:
-                for line in wpa_result.stdout.split('\n'):
-                    if line.startswith('ssid='):
-                        ssid_value = line.split('=', 1)[1].strip()
-                        if ssid_value:
-                            ssid = ssid_value
-                    elif line.startswith('ip_address='):
-                        ip_value = line.split('=', 1)[1].strip()
-                        if ip_value:
-                            ip_address = ip_value
-                    elif line.startswith('signal_level='):
-                        signal_dbm = int(line.split('=', 1)[1].strip())
-                        # 转换为百分比
-                        signal = max(0, min(100, (signal_dbm + 90) * 100 // 60))
+            if iw_result.returncode == 0 and 'Connected to' in iw_result.stdout:
+                # 获取SSID
+                for line in iw_result.stdout.split('\n'):
+                    if 'SSID:' in line:
+                        ssid = line.split('SSID:')[1].strip()
+                    elif 'signal:' in line:
+                        signal_match = re.search(r'(-?\d+)\s*dBm', line)
+                        if signal_match:
+                            signal_dbm = int(signal_match.group(1))
+                            # 转换为百分比（-30dBm到-90dBm对应100%到0%）
+                            signal = max(0, min(100, int((signal_dbm + 90) * 100 / 60)))
         except Exception as e:
-            print(f"Error getting info from wpa_cli: {e}")
+            print(f"Error getting info from iw: {e}")
         
-        # 方法2: 如果有IP但没有SSID，尝试从ip命令获取IP
-        if not ip_address:
-            try:
-                ip_result = subprocess.run(['ip', 'addr', 'show', 'wlan0'], 
-                                         capture_output=True, text=True, timeout=5)
-                if ip_result.returncode == 0:
-                    ip_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', ip_result.stdout)
-                    if ip_match:
-                        ip_address = ip_match.group(1)
-            except Exception as e:
-                print(f"Error getting IP: {e}")
+        # 方法2: 从ip命令获取IP地址
+        try:
+            ip_result = subprocess.run(['ip', '-4', 'addr', 'show', 'wlan0'], 
+                                     capture_output=True, text=True, timeout=5)
+            if ip_result.returncode == 0:
+                ip_match = re.search(r'inet (\d+\.\d+\.\d+\.\d+)', ip_result.stdout)
+                if ip_match:
+                    ip_address = ip_match.group(1)
+        except Exception as e:
+            print(f"Error getting IP: {e}")
         
-        # 方法3: 如果还没有SSID，尝试从iwconfig获取
+        # 方法3: 如果还没有获取到SSID，尝试从iwgetid获取
         if not ssid:
             try:
-                result = subprocess.run(['iwconfig', 'wlan0'], 
+                result = subprocess.run(['iwgetid', '-r'], 
                                       capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
-                    for line in result.stdout.split('\n'):
-                        if 'ESSID:' in line:
-                            essid_match = re.search(r'ESSID:"([^"]*)"', line)
-                            if essid_match:
-                                essid_value = essid_match.group(1)
-                                if essid_value and essid_value.strip():
-                                    ssid = essid_value
-                                    break
-                        elif 'Signal level=' in line and not signal:
-                            signal_match = re.search(r'Signal level=(-?\d+)', line)
-                            if signal_match:
-                                signal_dbm = int(signal_match.group(1))
-                                signal = max(0, min(100, (signal_dbm + 90) * 100 // 60))
+                    ssid = result.stdout.strip()
             except Exception as e:
-                print(f"Error getting info from iwconfig: {e}")
+                print(f"Error getting info from iwgetid: {e}")
         
         emit('wifi_status', {
-            'ssid': ssid,
-            'ip': ip_address,
+            'ssid': ssid or None,
+            'ip': ip_address or None,
             'signal': signal
         })
         
@@ -1370,71 +1354,44 @@ def handle_get_wifi_status():
 
 @socketio.on('scan_wifi')
 def handle_scan_wifi():
-    """扫描可用的WiFi网络"""
+    """扫描可用的WiFi网络 - 使用nmcli，与系统WiFi Manager一致"""
     try:
         import subprocess
-        import re
         
         send_log_message('开始扫描WiFi网络...', 'info')
         
-        # 使用iwlist扫描WiFi网络
-        result = subprocess.run(['sudo', 'iwlist', 'wlan0', 'scan'], 
+        # 使用nmcli扫描WiFi网络（与系统管理器一致）
+        result = subprocess.run(['nmcli', '-t', '-f', 'SSID,SIGNAL,SECURITY', 'device', 'wifi', 'list'], 
                               capture_output=True, text=True, timeout=30)
         
         networks = []
         
         if result.returncode == 0:
-            current_network = {}
+            seen_ssids = {}  # 用于去重，保留信号最强的
             
             for line in result.stdout.split('\n'):
-                line = line.strip()
+                if not line.strip():
+                    continue
                 
-                # 新的网络开始
-                if 'Cell ' in line and 'Address:' in line:
-                    if current_network.get('ssid'):
-                        networks.append(current_network)
-                    current_network = {}
-                
-                # ESSID (网络名称)
-                elif 'ESSID:' in line:
-                    essid_match = re.search(r'ESSID:"([^"]*)"', line)
-                    if essid_match:
-                        current_network['ssid'] = essid_match.group(1)
-                
-                # 信号强度
-                elif 'Signal level=' in line:
-                    signal_match = re.search(r'Signal level=(-?\d+)', line)
-                    if signal_match:
-                        signal_dbm = int(signal_match.group(1))
-                        # 转换为百分比
-                        signal_percent = max(0, min(100, (signal_dbm + 90) * 100 // 60))
-                        current_network['signal'] = signal_percent
-                
-                # 频道
-                elif 'Channel:' in line:
-                    channel_match = re.search(r'Channel:(\d+)', line)
-                    if channel_match:
-                        current_network['channel'] = channel_match.group(1)
-                
-                # 加密类型
-                elif 'Encryption key:' in line:
-                    if 'off' in line:
-                        current_network['security'] = None
-                    else:
-                        current_network['security'] = 'WEP'
-                
-                elif 'IE: IEEE 802.11i/WPA2' in line:
-                    current_network['security'] = 'WPA2'
-                elif 'IE: WPA' in line:
-                    current_network['security'] = 'WPA'
+                parts = line.split(':')
+                if len(parts) >= 2:
+                    ssid = parts[0].strip()
+                    signal_str = parts[1].strip() if len(parts) > 1 else '0'
+                    security = parts[2].strip() if len(parts) > 2 else '--'
+                    
+                    if ssid:
+                        signal = int(signal_str) if signal_str.isdigit() else 0
+                        
+                        # 只保留每个SSID信号最强的那个
+                        if ssid not in seen_ssids or seen_ssids[ssid]['signal'] < signal:
+                            seen_ssids[ssid] = {
+                                'ssid': ssid,
+                                'signal': signal,
+                                'security': 'WPA2' if security else None
+                            }
             
-            # 添加最后一个网络
-            if current_network.get('ssid'):
-                networks.append(current_network)
-        
-        # 过滤掉没有SSID的网络，并按信号强度排序
-        networks = [n for n in networks if n.get('ssid') and n['ssid'].strip()]
-        networks.sort(key=lambda x: x.get('signal', 0), reverse=True)
+            networks = list(seen_ssids.values())
+            networks.sort(key=lambda x: x.get('signal', 0), reverse=True)
         
         send_log_message(f'WiFi扫描完成，发现 {len(networks)} 个网络', 'success')
         
@@ -1460,7 +1417,7 @@ def handle_scan_wifi():
 
 @socketio.on('connect_wifi')
 def handle_connect_wifi(data):
-    """连接到WiFi网络 - 改进版本，使用系统级命令"""
+    """连接到WiFi网络 - 使用nmcli，与系统WiFi Manager一致"""
     try:
         ssid = data.get('ssid')
         password = data.get('password', '')
@@ -1479,124 +1436,36 @@ def handle_connect_wifi(data):
         })
         
         import subprocess
-        import os
-        import tempfile
-        
-        # 创建wpa_supplicant配置
-        if password:
-            password_config = f'psk="{password}"'
-        else:
-            password_config = "key_mgmt=NONE"
-            
-        wpa_config = f"""country=CN
-ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
-update_config=1
-
-network={{
-    ssid="{ssid}"
-    {password_config}
-}}
-"""
-        
-        # 写入临时配置文件
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.conf', delete=False) as f:
-            f.write(wpa_config)
-            temp_config_path = f.name
         
         try:
-            # 方法1: 使用wpa_cli命令（推荐，更可靠）
-            # 先添加网络配置
-            wpa_config_file = '/tmp/wpa_supplicant_new.conf'
-            with open(wpa_config_file, 'w') as f:
-                f.write(wpa_config)
+            # 使用nmcli连接WiFi（推荐方式，与系统管理器一致）
+            # nmcli会自动选择最佳信道和处理所有细节
             
-            # 使用wpa_cli连接到新网络
-            # 先断开当前连接
-            subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'disconnect'], 
-                         capture_output=True, timeout=3)
-            time.sleep(1)
-            
-            # 添加新网络
-            result = subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'add_network'], 
-                                 capture_output=True, text=True, timeout=5)
-            if result.returncode != 0:
-                raise Exception("Failed to add network")
-            
-            network_id = result.stdout.strip()
-            
-            # 设置SSID
-            subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'set_network', 
-                          network_id, 'ssid', f'"{ssid}"'], 
-                         capture_output=True, timeout=5)
-            
-            # 设置密码
             if password:
-                subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'set_network', 
-                              network_id, 'psk', f'"{password}"'], 
-                             capture_output=True, timeout=5)
+                # 加密网络连接
+                result = subprocess.run([
+                    'nmcli', 'device', 'wifi', 'connect', ssid, 'password', password
+                ], capture_output=True, text=True, timeout=20)
             else:
-                subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'set_network', 
-                              network_id, 'key_mgmt', 'NONE'], 
-                             capture_output=True, timeout=5)
+                # 开放网络连接
+                result = subprocess.run([
+                    'nmcli', 'device', 'wifi', 'connect', ssid
+                ], capture_output=True, text=True, timeout=20)
             
-            # 启用并连接网络
-            subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'enable_network', network_id], 
-                         capture_output=True, timeout=5)
-            subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'select_network', network_id], 
-                         capture_output=True, timeout=5)
-            
-            # 保存配置
-            subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'save_config'], 
-                         capture_output=True, timeout=5)
-            
-            # 等待连接建立
-            send_log_message('等待WiFi连接建立...', 'info')
-            for i in range(30):  # 最多等待30秒
-                time.sleep(1)
-                # 检查连接状态
-                status_result = subprocess.run(['sudo', 'wpa_cli', '-i', 'wlan0', 'status'], 
-                                              capture_output=True, text=True, timeout=3)
-                if status_result.returncode == 0:
-                    if 'wpa_state=COMPLETED' in status_result.stdout:
-                        send_log_message(f'WiFi已连接: {ssid}', 'success')
-                        break
-                    elif 'wpa_state=FAILED' in status_result.stdout:
-                        raise Exception("WiFi connection failed")
-            
-            # 获取IP地址
-            send_log_message('获取IP地址...', 'info')
-            dhcp_result = subprocess.run(['sudo', 'dhclient', 'wlan0'], 
-                                       capture_output=True, timeout=15)
-            
-            time.sleep(2)
-            
-            # 验证连接 - 简化验证，只检查IP地址
-            ip_result = subprocess.run(['ip', 'addr', 'show', 'wlan0'], 
-                                      capture_output=True, text=True, timeout=5)
-            has_ip = 'inet ' in ip_result.stdout if ip_result.returncode == 0 else False
-            
-            if has_ip:
+            if result.returncode == 0:
                 send_log_message(f'WiFi连接成功: {ssid}', 'success')
                 emit('wifi_connect_result', {
                     'success': True,
                     'ssid': ssid
                 })
             else:
-                raise Exception("Failed to obtain IP address")
+                # 解析错误信息
+                error_msg = result.stderr.strip() if result.stderr else 'Connection failed'
+                raise Exception(f"WiFi连接失败: {error_msg}")
                 
-        finally:
-            # 清理临时文件
-            if os.path.exists(temp_config_path):
-                os.unlink(temp_config_path)
-            if os.path.exists(wpa_config_file):
-                os.unlink(wpa_config_file)
+        except subprocess.TimeoutExpired:
+            raise Exception("Connection timeout")
         
-    except subprocess.TimeoutExpired:
-        send_log_message('WiFi连接超时', 'error')
-        emit('wifi_connect_result', {
-            'success': False,
-            'error': 'Connection timeout'
-        })
     except Exception as e:
         print(f"Error connecting to WiFi: {e}")
         send_log_message(f'WiFi连接失败: {str(e)}', 'error')

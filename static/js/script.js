@@ -1160,8 +1160,27 @@ function displayWifiNetworks(networks) {
         return;
     }
     
-    let html = '';
+    // 合并同名WiFi网络，只保留信号最强的那个（类似Ubuntu系统行为）
+    const mergedNetworks = {};
     networks.forEach(network => {
+        const ssid = network.ssid;
+        if (!mergedNetworks[ssid]) {
+            // 第一次遇到此SSID，直接添加
+            mergedNetworks[ssid] = network;
+        } else {
+            // 已存在同名网络，比较信号强度，保留信号强的
+            if (network.signal > mergedNetworks[ssid].signal) {
+                mergedNetworks[ssid] = network;
+            }
+        }
+    });
+    
+    // 转换为数组并按信号强度排序
+    const uniqueNetworks = Object.values(mergedNetworks);
+    uniqueNetworks.sort((a, b) => (b.signal || 0) - (a.signal || 0));
+    
+    let html = '';
+    uniqueNetworks.forEach(network => {
         const signalClass = getSignalClass(network.signal);
         const securityIcon = network.security ? '<i class="fas fa-lock security-icon"></i>' : '<i class="fas fa-unlock-alt"></i>';
         
@@ -1173,7 +1192,7 @@ function displayWifiNetworks(networks) {
                         ${network.ssid}
                     </div>
                     <div class="wifi-details">
-                        ${network.security || '开放网络'} • 频道 ${network.channel || 'N/A'}
+                        ${network.security || '开放网络'}
                     </div>
                 </div>
                 <div class="wifi-signal">

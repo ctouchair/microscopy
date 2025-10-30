@@ -1295,6 +1295,18 @@ window.onclick = function(event) {
 
 // 系统更新功能
 function openUpdateModal() {
+    // 基础联网提示与拦截
+    if (!navigator.onLine) {
+        const goWifi = confirm('系统更新需要联网。当前未检测到互联网连接，是否前往WiFi设置？');
+        if (goWifi) {
+            openWifiModal();
+            return;
+        }
+    } else {
+        // 在线也提示一次，提醒用户确保可访问互联网
+        addLogMessage('提示：系统更新需要联网，请确保WiFi已连接互联网。', 'info');
+    }
+
     document.getElementById('updateModal').style.display = 'block';
     // 自动检查更新
     checkForUpdates();
@@ -1318,6 +1330,15 @@ function checkForUpdates() {
     const checkBtn = document.getElementById('checkUpdateBtn');
     const performBtn = document.getElementById('performUpdateBtn');
     
+    // 无网络时直接提示并拦截
+    if (!navigator.onLine) {
+        alert('当前未检测到互联网连接，无法检查更新。请先连接WiFi到互联网。');
+        checkBtn.disabled = false;
+        checkBtn.innerHTML = '<i class="fas fa-search"></i> 检查更新';
+        performBtn.disabled = true;
+        return;
+    }
+
     checkBtn.disabled = true;
     checkBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 检查中...';
     
@@ -1334,6 +1355,12 @@ function performUpdate() {
     const performBtn = document.getElementById('performUpdateBtn');
     const checkBtn = document.getElementById('checkUpdateBtn');
     
+    // 无网络时直接提示并拦截
+    if (!navigator.onLine) {
+        alert('当前未检测到互联网连接，无法执行系统更新。请先连接WiFi到互联网。');
+        return;
+    }
+
     // 确认更新
     if (!confirm('系统更新将会重启服务，确定要继续吗？')) {
         return;

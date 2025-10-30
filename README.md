@@ -504,6 +504,8 @@ tar -czf venv_backup_$(date +%Y%m%d).tar.gz /home/admin/Documents/micro_env/
 - [OpenCV](https://opencv.org/) - 计算机视觉库
 - [Picamera2](https://github.com/raspberrypi/picamera2) - 树莓派摄像头库
 - [Adafruit](https://github.com/adafruit) - 硬件控制库
+- [OpenStitching](https://github.com/OpenStitching/stitching) - 图像拼接库
+- [OpenFlexure](https://openflexure.discourse.group/)（特别鸣谢 Richard Bowman、Julian Stirling、WilliamW）
 
 ---
 

@@ -629,7 +629,7 @@ def handle_stitch_images():
         
         # 拼接图像
         send_log_message('正在处理图像拼接...', 'info')
-        stitched_image = stitch_images(images)
+        stitched_image = stitch_images(images, positions)
         
         if stitched_image is not None:
             stitched_image = cv2.cvtColor(stitched_image, cv2.COLOR_BGR2RGB)

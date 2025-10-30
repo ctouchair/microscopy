@@ -3,22 +3,19 @@ import os
 import numpy as np
 import json
 from focus_stack_low_power import LowPowerFocusStack
+from stitching import Stitcher
 
-def stitch_images(images):
+def stitch_images(images, positions):
     """
     拼接图像函数，支持3x3网格拼接实现400%画幅
+    
+    参数:
+    - images: 要拼接的图像列表
+    - positions: 位置信息列表
     """
-    # 创建 Stitcher 对象
-    stitcher = cv2.Stitcher_create()
-
-    # 拼接图片
-    status, stitched_image = stitcher.stitch(images)
-
-    # 判断拼接是否成功
-    if status == cv2.Stitcher_OK:
-        return stitched_image
-    else:
-        return None
+    stitcher = Stitcher()
+    panorama = stitcher.stitch(images)
+    return panorama
 
 
 def crop_center_expanding_rect(image, target_ratio=4/3):
@@ -223,3 +220,4 @@ def load_fused_perspective_transform(fused_params_json_path='fused_perspective_t
     fused_matrix = np.array(fused_params['perspective_matrix'], dtype=np.float32)
     output_size = tuple(fused_params['output_size'])
     return fused_matrix, output_size
+

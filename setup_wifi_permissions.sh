@@ -31,21 +31,22 @@ cat > "$SUDOERS_FILE" << EOF
 # 显微镜控制系统WiFi管理权限
 # 允许admin用户执行WiFi相关命令而无需密码
 
-# WiFi扫描和状态查询
+# WiFi扫描和状态查询（使用nmcli，与系统WiFi Manager一致）
+$USERNAME ALL=(ALL) NOPASSWD: /usr/bin/nmcli
+$USERNAME ALL=(ALL) NOPASSWD: /usr/bin/nmcli device wifi *
+$USERNAME ALL=(ALL) NOPASSWD: /usr/bin/nmcli connection *
+$USERNAME ALL=(ALL) NOPASSWD: /usr/bin/nmcli device *
+
+# 传统的iw/iwgetid命令作为备用
+$USERNAME ALL=(ALL) NOPASSWD: /usr/sbin/iw
+$USERNAME ALL=(ALL) NOPASSWD: /usr/bin/iwgetid
 $USERNAME ALL=(ALL) NOPASSWD: /usr/sbin/iwlist
 $USERNAME ALL=(ALL) NOPASSWD: /usr/sbin/iwconfig
 
-# WiFi连接管理
-$USERNAME ALL=(ALL) NOPASSWD: /usr/bin/killall wpa_supplicant
-$USERNAME ALL=(ALL) NOPASSWD: /usr/sbin/wpa_supplicant
-$USERNAME ALL=(ALL) NOPASSWD: /usr/sbin/dhclient
-
-# 配置文件管理
-$USERNAME ALL=(ALL) NOPASSWD: /bin/cp * /etc/wpa_supplicant/wpa_supplicant.conf
-
 # 网络接口管理
-$USERNAME ALL=(ALL) NOPASSWD: /usr/sbin/ip link set wlan0 *
-$USERNAME ALL=(ALL) NOPASSWD: /usr/sbin/ip addr show wlan0
+$USERNAME ALL=(ALL) NOPASSWD: /usr/sbin/ip link set wlan*
+$USERNAME ALL=(ALL) NOPASSWD: /usr/sbin/ip addr show wlan*
+$USERNAME ALL=(ALL) NOPASSWD: /usr/sbin/ip -4 addr show wlan*
 
 # 网络连接测试
 $USERNAME ALL=(ALL) NOPASSWD: /usr/bin/ping -c 1 *
@@ -67,14 +68,14 @@ echo ""
 echo "=== 权限设置完成 ==="
 echo ""
 echo "已配置的权限:"
-echo "  - WiFi网络扫描 (iwlist, iwconfig)"
-echo "  - WiFi连接管理 (wpa_supplicant, dhclient)"
+echo "  - WiFi网络管理 (nmcli - 与系统WiFi Manager一致)"
+echo "  - WiFi网络扫描 (nmcli, iwlist, iwconfig)"
+echo "  - WiFi连接管理 (nmcli)"
 echo "  - 网络接口管理 (ip命令)"
-echo "  - 配置文件操作"
 echo "  - 网络连接测试 (ping)"
 echo ""
 echo "测试WiFi权限:"
-echo "  sudo -u $USERNAME sudo iwconfig"
-echo "  sudo -u $USERNAME sudo iwlist wlan0 scan"
+echo "  sudo -u $USERNAME sudo nmcli device wifi list"
+echo "  sudo -u $USERNAME sudo nmcli device status"
 echo ""
 echo "如需移除权限，请删除文件: $SUDOERS_FILE" 

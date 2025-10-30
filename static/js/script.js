@@ -56,9 +56,9 @@ socket.on('cam1_mode_response', function(data) {
 });
 
 // 显微镜倍率相关变量和函数（全局定义，确保在任何事件处理之前就可用）
-window.currentMagnificationIndex = 2; // 默认40倍，索引为2
-window.magnificationValues = [10, 20, 40, 60, 100];
-window.magnificationTexts = ['10倍', '20倍', '40倍', '60倍', '100倍'];
+window.currentMagnificationIndex = 0; // 仅保留20/40倍，默认20倍（索引0）
+window.magnificationValues = [20, 40];
+window.magnificationTexts = ['20倍', '40倍'];
 
 // 更新倍率显示
 function updateMagnificationDisplay() {

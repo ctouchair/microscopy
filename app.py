@@ -570,7 +570,7 @@ def handle_stitch_images():
         # 保存当前位置
         original_x = motor0.x_pos
         original_y = motor0.y_pos
-        mag_scale = 40/cam0.mag_scale
+        mag_scale = 20/cam0.mag_scale
         # 计算移动步长（根据图像分辨率和视野计算）
         # 假设图像视野为0.4mm x 0.3mm，需要50%重叠区域
         # 每张图片移动0.2mm，确保有足够重叠

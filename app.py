@@ -14,7 +14,7 @@ import json
 import numpy as np
 import base64
 import io
-from utils import stitch_images, crop_center_expanding_rect, get_translation_shift, focus_stack, count_cells
+from utils import stitch_images, focus_stack, count_cells
 
 
 class ConfigManager:
@@ -635,7 +635,7 @@ def handle_stitch_images():
             stitched_image = cv2.cvtColor(stitched_image, cv2.COLOR_BGR2RGB)
             
             # 裁剪黑边
-            stitched_image = crop_center_expanding_rect(stitched_image)
+            # stitched_image = crop_center_expanding_rect(stitched_image)
             
             # 生成拼接后的图像文件名（不保存到本地）
             timestamp = time.strftime("%Y%m%d-%H%M%S")

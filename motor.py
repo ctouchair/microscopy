@@ -161,6 +161,56 @@ class motor():
         IN1, IN2, IN3, IN4 = direction(pos=self.direction)
         self.forward(IN1, IN2, IN3, IN4, 0.002, int(step))
 
+    def move_to_target(self, target_pose=0, delay=0.002):
+        IN1, IN2, IN3, IN4 = direction(pos=self.direction)
+        if IN1 is not None:
+            if self.direction == 'X':
+                step_sign = self.step_sign_x
+                real_pos = self.x_pos
+            elif self.direction == 'Y':
+                step_sign = self.step_sign_y
+                real_pos = self.y_pos
+            elif self.direction == 'Z':
+                step_sign = self.step_sign_z
+                real_pos = self.z_pos
+            steps = target_pose - real_pos
+            while abs(steps) > 1:
+                if not self.status:
+                    break
+                elif steps*step_sign > 0:
+                    setStep(IN1, IN2, IN3, IN4, 1, 0, 0, 1)
+                    time.sleep(delay)
+                    setStep(IN1, IN2, IN3, IN4, 0, 0, 1, 1)
+                    time.sleep(delay)
+                    setStep(IN1, IN2, IN3, IN4, 0, 1, 1, 0)
+                    time.sleep(delay)
+                    setStep(IN1, IN2, IN3, IN4, 1, 1, 0, 0)
+                    time.sleep(delay)
+                elif steps*step_sign < 0:
+                    setStep(IN1, IN2, IN3, IN4, 1, 0, 0, 1)
+                    time.sleep(delay)
+                    setStep(IN1, IN2, IN3, IN4, 1, 1, 0, 0)
+                    time.sleep(delay)
+                    setStep(IN1, IN2, IN3, IN4, 0, 1, 1, 0)
+                    time.sleep(delay)
+                    setStep(IN1, IN2, IN3, IN4, 0, 0, 1, 1)
+                    time.sleep(delay)
+                if self.direction == 'X':
+                    self.x_pos += np.sign(steps)
+                    real_pos = self.x_pos
+                elif self.direction == 'Y':
+                    self.y_pos += np.sign(steps)
+                    real_pos = self.y_pos
+                elif self.direction == 'Z':
+                    self.z_pos += np.sign(steps)
+                    real_pos = self.z_pos
+                steps = target_pose - real_pos
+            setStep(IN1, IN2, IN3, IN4, 0, 0, 0, 0)
+            self.status = False
+        else:
+            print('GPIO IN Error !!')
+
+
     
     def measure_voltage(self, pos_direct): #切换方向时第二次测量才准，需要先读取一次
         if pos_direct == 'X':

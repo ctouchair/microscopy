@@ -673,25 +673,12 @@ function save_config() {
     socket.emit('save_config');
 }
 
-// Z轴微调函数
+// Z轴微调函数 - 直接触发电机移动，不改变滑块位置
 function adjustZ(delta) {
-    const zSlider = document.getElementById('z_pos');
-    if (zSlider) {
-        let currentValue = parseFloat(zSlider.value);
-        let newValue = currentValue + delta;
-        
-        // 确保新值在滑块范围内
-        const min = parseFloat(zSlider.min);
-        const max = parseFloat(zSlider.max);
-        newValue = Math.max(min, Math.min(max, newValue));
-        
-        // 设置新值并触发input事件
-        zSlider.value = newValue.toFixed(3);
-        
-        // 触发input事件，复用现有的后端调用
-        const event = new Event('input', { bubbles: true });
-        zSlider.dispatchEvent(event);
-    }
+    // delta应该是-0.001或0.001，但我们需要转换为步数
+    // 根据motor0.move()的调用，直接发送步数（-1或1）
+    const steps = delta > 0 ? 1 : -1;
+    socket.emit('move_z', { steps: steps });
 }
 
 function stitch_images() {

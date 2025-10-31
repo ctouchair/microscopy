@@ -954,16 +954,12 @@ def handle_set_x_pos(data):
     try:
         xpos = float(data['value'])  #每移动1mm，相当于电机转steps_per_mm步
         motor0.direction = 'X'
+        target_xpose = int(motor0.xy_steps_per_mm*xpos)
         if motor0.status:
             motor0.status = False
             time.sleep(0.01)
-            xdelta_step = int(motor0.xy_steps_per_mm*xpos - motor0.x_pos)  # Convert to int
-            motor0.status = True
-            motor0.move(xdelta_step)
-        else:
-            motor0.status = True
-            xdelta_step = int(motor0.xy_steps_per_mm*xpos - motor0.x_pos)  # Convert to int
-            motor0.move(xdelta_step)
+        motor0.status = True
+        motor0.move_to_target(target_xpose)
         emit('x_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
         emit('x_pos_set', {'status': 'error', 'message': str(e)})
@@ -974,16 +970,12 @@ def handle_set_y_pos(data):
     try:
         ypos = float(data['value'])  #每移动1mm，相当于电机转steps_per_mm步
         motor0.direction = 'Y'
+        target_ypose = int(motor0.xy_steps_per_mm*ypos)
         if motor0.status:
             motor0.status = False
             time.sleep(0.01)
-            ydelta_step = int(motor0.xy_steps_per_mm*ypos - motor0.y_pos)  # Convert to int
-            motor0.status = True
-            motor0.move(ydelta_step)
-        else:
-            motor0.status = True
-            ydelta_step = int(motor0.xy_steps_per_mm*ypos - motor0.y_pos)  # Convert to int
-            motor0.move(ydelta_step)
+        motor0.status = True
+        motor0.move_to_target(target_ypose)
         emit('y_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
         emit('y_pos_set', {'status': 'error', 'message': str(e)})
@@ -994,19 +986,32 @@ def handle_set_z_pos(data):
     try:
         zpos = float(data['value'])  #每移动1mm，相当于电机转steps_per_mm步
         motor0.direction, motor0.focus = 'Z', False
+        target_zpose = int(motor0.z_steps_per_mm*zpos)
         if motor0.status:
             motor0.status = False
             time.sleep(0.01)
-            zdelta_step = int(motor0.z_steps_per_mm*zpos - motor0.z_pos)  # Convert to int
-            motor0.status = True
-            motor0.move(zdelta_step)
-        else:
-            motor0.status = True
-            zdelta_step = int(motor0.z_steps_per_mm*zpos - motor0.z_pos)  # Convert to int
-            motor0.move(zdelta_step)
+        motor0.status = True
+        motor0.move_to_target(target_zpose)
         emit('z_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
         emit('z_pos_set', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('move_z')
+def handle_move_z(data):
+    """处理Z轴步进移动请求"""
+    try:
+        steps = int(data.get('steps', 1))  # 默认移动1步，可以是-1或1
+        motor0.direction = 'Z'
+        motor0.focus = False
+        if motor0.status:
+            motor0.status = False
+            time.sleep(0.01)
+        motor0.status = True
+        motor0.move(steps)
+        emit('z_move_response', {'status': 'success', 'steps': steps})
+    except Exception as e:
+        emit('z_move_response', {'status': 'error', 'message': str(e)})
 
 
 def focus_init():
@@ -1830,19 +1835,17 @@ def send_motor_positions():
                 'z_vol': z_pos_vol_mm
             })
              # 二者定位差距大时，以电压校准为准，因为螺纹会有回程差，只针对运动时的方向，其他方向不控制
-            if abs(x_pos_mm - x_pos_vol_mm) > 0.1 and motor0.direction == 'X':
+            if abs(x_pos_mm - x_pos_vol_mm) > 0.05 and motor0.direction == 'X':
                 motor0.x_pos = int(x_pos_vol_mm*motor0.xy_steps_per_mm)
-            if abs(y_pos_mm - y_pos_vol_mm) > 0.1 and motor0.direction == 'Y':
+            if abs(y_pos_mm - y_pos_vol_mm) > 0.05 and motor0.direction == 'Y':
                 motor0.y_pos = int(y_pos_vol_mm*motor0.xy_steps_per_mm)
-            if abs(z_pos_mm - z_pos_vol_mm) > 0.1 and motor0.direction == 'Z':
+            if abs(z_pos_mm - z_pos_vol_mm) > 0.02 and motor0.direction == 'Z':
                 motor0.z_pos = int(z_pos_vol_mm*motor0.z_steps_per_mm)
 
         except Exception as e:
             print(f"Error sending motor positions: {e}")
-        # 保存电机位置
-        # save_motor_positions()
         if motor0.status: #动态时，实时保存
-            time.sleep(0.2)  # 200ms frequency
+            time.sleep(0.1)  # 200ms frequency
         else: #静态时，缓慢保存
             time.sleep(1)  # 200ms frequency
             

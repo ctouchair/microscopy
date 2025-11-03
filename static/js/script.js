@@ -147,6 +147,33 @@ socket.on('settings_update', function(settings) {
         document.getElementById('z_level').value = settings.z_level;
         document.getElementById('z_level_value').textContent = `景深堆叠Z Level：${settings.z_level} 微米`;
     }
+    if (settings.z_step_size !== undefined) {
+        const zStepSize = document.getElementById('zStepSize');
+        if (zStepSize) {
+            // 验证步长值是否有效（1, 2, 5, 10, 50）
+            const validSteps = ['1', '2', '5', '10', '50'];
+            const stepSizeStr = String(settings.z_step_size);
+            if (validSteps.includes(stepSizeStr)) {
+                zStepSize.value = stepSizeStr;
+            }
+        }
+    }
+    if (settings.x_step_size !== undefined) {
+        const xStepSize = document.getElementById('xStepSize');
+        if (xStepSize) {
+            // 验证最小值50μm
+            const stepSize = Math.max(50, parseInt(settings.x_step_size) || 50);
+            xStepSize.value = stepSize;
+        }
+    }
+    if (settings.y_step_size !== undefined) {
+        const yStepSize = document.getElementById('yStepSize');
+        if (yStepSize) {
+            // 验证最小值50μm
+            const stepSize = Math.max(50, parseInt(settings.y_step_size) || 50);
+            yStepSize.value = stepSize;
+        }
+    }
 });
 
 // Capture response
@@ -670,15 +697,88 @@ function fast_forcus() {
 }
 
 function save_config() {
-    socket.emit('save_config');
+    // 获取当前选择的步长值并发送到后端
+    const zStepSize = document.getElementById('zStepSize');
+    const zStep = zStepSize ? parseInt(zStepSize.value) : 2;
+    
+    const xStepSize = document.getElementById('xStepSize');
+    const xStep = xStepSize ? Math.max(50, parseInt(xStepSize.value) || 50) : 50;  // 最小值50μm
+    
+    const yStepSize = document.getElementById('yStepSize');
+    const yStep = yStepSize ? Math.max(50, parseInt(yStepSize.value) || 50) : 50;  // 最小值50μm
+    
+    socket.emit('save_config', { 
+        z_step_size: zStep,
+        x_step_size: xStep,
+        y_step_size: yStep
+    });
 }
 
-// Z轴微调函数 - 直接触发电机移动，不改变滑块位置
-function adjustZ(delta) {
-    // delta应该是-0.001或0.001，但我们需要转换为步数
-    // 根据motor0.move()的调用，直接发送步数（-1或1）
-    const steps = delta > 0 ? 1 : -1;
-    socket.emit('move_z', { steps: steps });
+// Z轴步进控制函数 - 根据选择的步长移动Z轴
+function moveZForward() {
+    const stepSize = parseInt(document.getElementById('zStepSize').value);
+    // 步长单位是微米，1微米 = 1步（0.001mm = 1步）
+    socket.emit('move_z', { steps: stepSize });
+}
+
+function moveZBackward() {
+    const stepSize = parseInt(document.getElementById('zStepSize').value);
+    // 步长单位是微米，1微米 = 1步（0.001mm = 1步），后退为负值
+    socket.emit('move_z', { steps: -stepSize });
+}
+
+// X轴步进控制函数 - 根据输入的步长移动X轴（使用move方式）
+function moveXLeft() {
+    const stepSizeInput = document.getElementById('xStepSize');
+    const stepSize = parseFloat(stepSizeInput.value) || 0;
+    if (stepSize < 50) {
+        alert('X轴步长最小值为50μm，请重新输入');
+        stepSizeInput.value = 50;
+        return;
+    }
+    
+    // 向左移动（负方向），发送负的步长值
+    socket.emit('move_x', { step_size_um: -stepSize });
+}
+
+function moveXRight() {
+    const stepSizeInput = document.getElementById('xStepSize');
+    const stepSize = parseFloat(stepSizeInput.value) || 0;
+    if (stepSize < 50) {
+        alert('X轴步长最小值为50μm，请重新输入');
+        stepSizeInput.value = 50;
+        return;
+    }
+    
+    // 向右移动（正方向），发送正的步长值
+    socket.emit('move_x', { step_size_um: stepSize });
+}
+
+// Y轴步进控制函数 - 根据输入的步长移动Y轴（使用move方式）
+function moveYDown() {
+    const stepSizeInput = document.getElementById('yStepSize');
+    const stepSize = parseFloat(stepSizeInput.value) || 0;
+    if (stepSize < 50) {
+        alert('Y轴步长最小值为50μm，请重新输入');
+        stepSizeInput.value = 50;
+        return;
+    }
+    
+    // 向下移动（负方向），发送负的步长值
+    socket.emit('move_y', { step_size_um: -stepSize });
+}
+
+function moveYUp() {
+    const stepSizeInput = document.getElementById('yStepSize');
+    const stepSize = parseFloat(stepSizeInput.value) || 0;
+    if (stepSize < 50) {
+        alert('Y轴步长最小值为50μm，请重新输入');
+        stepSizeInput.value = 50;
+        return;
+    }
+    
+    // 向上移动（正方向），发送正的步长值
+    socket.emit('move_y', { step_size_um: stepSize });
 }
 
 function stitch_images() {

@@ -113,6 +113,20 @@
                     <span id="x_current" class="current-position">当前位置：0.000 mm</span>
                 </div>
                 <input type="range" id="x_pos" min="0" max="18" step="0.01" value="0">
+                
+                <!-- X轴步进控制 -->
+                <div class="xy-step-control">
+                    <button class="step-btn" onclick="moveXLeft()">
+                        <i class="fas fa-chevron-left"></i> 左
+                    </button>
+                    <div class="step-input-wrapper">
+                        <input type="number" id="xStepSize" class="step-input" value="50" min="50" step="1" placeholder="步长">
+                        <span class="step-unit">μm</span>
+                    </div>
+                    <button class="step-btn" onclick="moveXRight()">
+                        <i class="fas fa-chevron-right"></i> 右
+                    </button>
+                </div>
 
                 <!-- Y方向 -->
                 <div class="position-row">
@@ -120,6 +134,20 @@
                     <span id="y_current" class="current-position">当前位置：0.000 mm</span>
                 </div>
                 <input type="range" id="y_pos" min="0" max="18" step="0.01" value="0">
+                
+                <!-- Y轴步进控制 -->
+                <div class="xy-step-control">
+                    <button class="step-btn" onclick="moveYDown()">
+                        <i class="fas fa-chevron-down"></i> 下
+                    </button>
+                    <div class="step-input-wrapper">
+                        <input type="number" id="yStepSize" class="step-input" value="50" min="50" step="1" placeholder="步长">
+                        <span class="step-unit">μm</span>
+                    </div>
+                    <button class="step-btn" onclick="moveYUp()">
+                        <i class="fas fa-chevron-up"></i> 上
+                    </button>
+                </div>
 
                 <!-- Z方向 -->
                 <div class="position-row">
@@ -128,13 +156,20 @@
                 </div>
                 <input type="range" id="z_pos" min="0" max="10" step="0.001" value="0">
                 
-                <!-- Z轴微调按钮 -->
-                <div class="z-fine-tune">
-                    <button class="fine-tune-btn" onclick="adjustZ(-0.001)">
-                        <i class="fas fa-chevron-left"></i> -0.001mm
+                <!-- Z轴步进控制 -->
+                <div class="z-step-control">
+                    <button class="step-btn" onclick="moveZBackward()">
+                        <i class="fas fa-chevron-left"></i> 后退
                     </button>
-                    <button class="fine-tune-btn" onclick="adjustZ(0.001)">
-                        <i class="fas fa-chevron-right"></i> +0.001mm
+                    <select id="zStepSize" class="step-selector">
+                        <option value="1">1μm</option>
+                        <option value="2" selected>2μm</option>
+                        <option value="5">5μm</option>
+                        <option value="10">10μm</option>
+                        <option value="50">50μm</option>
+                    </select>
+                    <button class="step-btn" onclick="moveZForward()">
+                        <i class="fas fa-chevron-right"></i> 前进
                     </button>
                 </div>
             </div>

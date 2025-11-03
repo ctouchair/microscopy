@@ -674,7 +674,7 @@ input[type="range"]:focus {
     box-sizing: border-box;
 }
 
-.z-fine-tune {
+.z-step-control {
     display: flex;
     justify-content: center;
     align-items: center;
@@ -684,7 +684,7 @@ input[type="range"]:focus {
     margin-bottom: 12px;
 }
 
-.fine-tune-btn {
+.step-btn {
     flex: 1;
     padding: 8px 16px;
     font-size: 13px;
@@ -701,20 +701,107 @@ input[type="range"]:focus {
     gap: 6px;
 }
 
-.fine-tune-btn:hover {
+.step-btn:hover {
     background: rgba(0, 122, 255, 0.1);
     border-color: rgba(0, 122, 255, 0.5);
     transform: translateY(-1px);
     box-shadow: 0 2px 8px rgba(0, 122, 255, 0.2);
 }
 
-.fine-tune-btn:active {
+.step-btn:active {
     transform: translateY(0);
     box-shadow: 0 1px 3px rgba(0, 122, 255, 0.2);
 }
 
-.fine-tune-btn i {
+.step-btn i {
     font-size: 14px;
+}
+
+.step-selector {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #007aff;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(0, 122, 255, 0.3);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    min-width: 70px;
+    text-align: center;
+}
+
+.step-selector:hover {
+    background: rgba(0, 122, 255, 0.1);
+    border-color: rgba(0, 122, 255, 0.5);
+}
+
+.step-selector:focus {
+    outline: none;
+    border-color: rgba(0, 122, 255, 0.7);
+    box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.2);
+}
+
+.xy-step-control {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    margin-top: 8px;
+    margin-bottom: 12px;
+}
+
+.step-input {
+    flex: 1 1 auto;
+    padding: 8px 8px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #007aff;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid rgba(0, 122, 255, 0.3);
+    border-radius: 10px;
+    transition: all 0.2s ease;
+    min-width: 0;
+    text-align: center;
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+
+.step-input::-webkit-outer-spin-button,
+.step-input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.step-input:hover {
+    background: rgba(0, 122, 255, 0.1);
+    border-color: rgba(0, 122, 255, 0.5);
+}
+
+.step-input:focus {
+    outline: none;
+    border-color: rgba(0, 122, 255, 0.7);
+    box-shadow: 0 0 0 2px rgba(0, 122, 255, 0.2);
+}
+
+.step-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 0 0 auto;
+    width: 94px;
+    justify-content: center;
+}
+
+.step-unit {
+    font-size: 13px;
+    font-weight: 500;
+    color: #007aff;
+    white-space: nowrap;
+    padding: 0;
+    flex-shrink: 0;
 }
 
 .slider-row {

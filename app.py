@@ -21,6 +21,9 @@ class ConfigManager:
     """配置管理类，用于管理所有配置参数"""
     def __init__(self):
         self.z_level = 5  # 景深堆叠Z Level参数
+        self.z_step_size = 2  # Z轴步进控制步长（微米），默认2μm
+        self.x_step_size = 50  # X轴步进控制步长（微米），默认50μm
+        self.y_step_size = 50  # Y轴步进控制步长（微米），默认50μm
         self.show_xyz = False  # 控制XYZ估算位置曲线的显示
         self.recording_interval = 0  # 拍摄间隔时间（秒）
         self.is_recording = False
@@ -63,6 +66,15 @@ class ConfigManager:
                 # 读取景深堆叠Z Level参数，如果不存在则使用默认值5
                 self.z_level = settings.get('z_level', 5)
                 print(f"Loaded z_level: {self.z_level}")
+                # 读取Z轴步进控制步长，如果不存在则使用默认值2
+                self.z_step_size = settings.get('z_step_size', 2)
+                print(f"Loaded z_step_size: {self.z_step_size}")
+                # 读取X轴步进控制步长，如果不存在则使用默认值50
+                self.x_step_size = settings.get('x_step_size', 50)
+                print(f"Loaded x_step_size: {self.x_step_size}")
+                # 读取Y轴步进控制步长，如果不存在则使用默认值50
+                self.y_step_size = settings.get('y_step_size', 50)
+                print(f"Loaded y_step_size: {self.y_step_size}")
             return settings
         except FileNotFoundError:
             print("Settings file not found. Using default settings.")
@@ -82,6 +94,9 @@ class ConfigManager:
                 'z_steps_per_mm': motor0.z_steps_per_mm,
                 'magnification': cam0.mag_scale,  # 保存显微镜倍率
                 'z_level': self.z_level,  # 保存景深堆叠Z Level参数
+                'z_step_size': self.z_step_size,  # 保存Z轴步进控制步长
+                'x_step_size': self.x_step_size,  # 保存X轴步进控制步长
+                'y_step_size': self.y_step_size,  # 保存Y轴步进控制步长
             }
             with open('/home/admin/Documents/microscopy/settings.json', 'w') as f:
                 json.dump(settings, f)
@@ -1014,6 +1029,68 @@ def handle_move_z(data):
         emit('z_move_response', {'status': 'error', 'message': str(e)})
 
 
+@socketio.on('move_x')
+def handle_move_x(data):
+    """处理X轴步进移动请求"""
+    try:
+        step_size_um = float(data.get('step_size_um', 0))  # 步长（微米），可为正数或负数
+        if step_size_um == 0:
+            raise ValueError('步长不能为0')
+        
+        # 将微米转换为步数：(步长_um / 1000) * xy_steps_per_mm
+        # 保持正负号以确定方向
+        step_size_mm = abs(step_size_um) / 1000.0
+        steps = int(step_size_mm * motor0.xy_steps_per_mm)
+        if steps == 0:
+            steps = 1  # 确保至少移动1步
+        
+        # 根据step_size_um的正负确定方向
+        if step_size_um < 0:
+            steps = -steps
+        
+        motor0.direction = 'X'
+        motor0.focus = False
+        if motor0.status:
+            motor0.status = False
+            time.sleep(0.01)
+        motor0.status = True
+        motor0.move(steps)
+        emit('x_move_response', {'status': 'success', 'steps': steps})
+    except Exception as e:
+        emit('x_move_response', {'status': 'error', 'message': str(e)})
+
+
+@socketio.on('move_y')
+def handle_move_y(data):
+    """处理Y轴步进移动请求"""
+    try:
+        step_size_um = float(data.get('step_size_um', 0))  # 步长（微米），可为正数或负数
+        if step_size_um == 0:
+            raise ValueError('步长不能为0')
+        
+        # 将微米转换为步数：(步长_um / 1000) * xy_steps_per_mm
+        # 保持正负号以确定方向
+        step_size_mm = abs(step_size_um) / 1000.0
+        steps = int(step_size_mm * motor0.xy_steps_per_mm)
+        if steps == 0:
+            steps = 1  # 确保至少移动1步
+        
+        # 根据step_size_um的正负确定方向
+        if step_size_um < 0:
+            steps = -steps
+        
+        motor0.direction = 'Y'
+        motor0.focus = False
+        if motor0.status:
+            motor0.status = False
+            time.sleep(0.01)
+        motor0.status = True
+        motor0.move(steps)
+        emit('y_move_response', {'status': 'success', 'steps': steps})
+    except Exception as e:
+        emit('y_move_response', {'status': 'error', 'message': str(e)})
+
+
 def focus_init():
     motor0.direction = 'Z'
     motor0.focus = False  # 开始对焦
@@ -1249,8 +1326,17 @@ def handle_set_z_level(data):
 
 
 @socketio.on('save_config')
-def handle_save_config():
+def handle_save_config(data=None):
     try:
+        # 如果前端发送了步长配置，更新配置
+        if data:
+            if 'z_step_size' in data:
+                config.z_step_size = int(data['z_step_size'])
+            if 'x_step_size' in data:
+                config.x_step_size = max(50, int(data['x_step_size']))  # 最小值50μm
+            if 'y_step_size' in data:
+                config.y_step_size = max(50, int(data['y_step_size']))  # 最小值50μm
+        
         if config.save_settings():
             emit('config_saved', {'status': 'success', 'message': 'Configuration saved'})
         else:

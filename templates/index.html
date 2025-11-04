@@ -157,17 +157,14 @@
                 <input type="range" id="z_pos" min="0" max="10" step="0.001" value="0">
                 
                 <!-- Z轴步进控制 -->
-                <div class="z-step-control">
+                <div class="xy-step-control">
                     <button class="step-btn" onclick="moveZBackward()">
                         <i class="fas fa-chevron-left"></i> 后退
                     </button>
-                    <select id="zStepSize" class="step-selector">
-                        <option value="1">1μm</option>
-                        <option value="2" selected>2μm</option>
-                        <option value="5">5μm</option>
-                        <option value="10">10μm</option>
-                        <option value="50">50μm</option>
-                    </select>
+                    <div class="step-input-wrapper">
+                        <input type="number" id="zStepSize" class="step-input" value="2" min="1" step="1" placeholder="步长">
+                        <span class="step-unit">μm</span>
+                    </div>
                     <button class="step-btn" onclick="moveZForward()">
                         <i class="fas fa-chevron-right"></i> 前进
                     </button>

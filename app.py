@@ -1391,7 +1391,7 @@ def handle_save_config(data=None):
         # 如果前端发送了步长配置，更新配置
         if data:
             if 'z_step_size' in data:
-                config.z_step_size = int(data['z_step_size'])
+                config.z_step_size = max(1, int(data['z_step_size']))  # 最小值1μm
             if 'x_step_size' in data:
                 config.x_step_size = max(50, int(data['x_step_size']))  # 最小值50μm
             if 'y_step_size' in data:

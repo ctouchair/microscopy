@@ -150,12 +150,9 @@ socket.on('settings_update', function(settings) {
     if (settings.z_step_size !== undefined) {
         const zStepSize = document.getElementById('zStepSize');
         if (zStepSize) {
-            // 验证步长值是否有效（1, 2, 5, 10, 50）
-            const validSteps = ['1', '2', '5', '10', '50'];
-            const stepSizeStr = String(settings.z_step_size);
-            if (validSteps.includes(stepSizeStr)) {
-                zStepSize.value = stepSizeStr;
-            }
+            // 验证最小值1μm
+            const stepSize = Math.max(1, parseInt(settings.z_step_size) || 1);
+            zStepSize.value = stepSize;
         }
     }
     if (settings.x_step_size !== undefined) {
@@ -501,7 +498,7 @@ socket.on('focus_complete', function(data) {
 socket.on('config_saved', function(data) {
     if (data.status === 'success') {
         console.log('Configuration saved');
-        alert('设置已保存');
+        // 静默保存，不显示弹窗
     } else {
         console.error('Save failed:', data.message);
         alert('保存失败: ' + data.message);
@@ -697,9 +694,9 @@ function fast_forcus() {
 }
 
 function save_config() {
-    // 获取当前选择的步长值并发送到后端
+    // 获取当前输入的步长值并发送到后端
     const zStepSize = document.getElementById('zStepSize');
-    const zStep = zStepSize ? parseInt(zStepSize.value) : 2;
+    const zStep = zStepSize ? Math.max(1, parseInt(zStepSize.value) || 1) : 1;  // 最小值1μm
     
     const xStepSize = document.getElementById('xStepSize');
     const xStep = xStepSize ? Math.max(50, parseInt(xStepSize.value) || 50) : 50;  // 最小值50μm
@@ -714,15 +711,27 @@ function save_config() {
     });
 }
 
-// Z轴步进控制函数 - 根据选择的步长移动Z轴
+// Z轴步进控制函数 - 根据输入的步长移动Z轴
 function moveZForward() {
-    const stepSize = parseInt(document.getElementById('zStepSize').value);
+    const stepSizeInput = document.getElementById('zStepSize');
+    const stepSize = parseInt(stepSizeInput.value) || 0;
+    if (stepSize < 1) {
+        alert('Z轴步长最小值为1μm，请重新输入');
+        stepSizeInput.value = 1;
+        return;
+    }
     // 步长单位是微米，1微米 = 1步（0.001mm = 1步）
     socket.emit('move_z', { steps: stepSize });
 }
 
 function moveZBackward() {
-    const stepSize = parseInt(document.getElementById('zStepSize').value);
+    const stepSizeInput = document.getElementById('zStepSize');
+    const stepSize = parseInt(stepSizeInput.value) || 0;
+    if (stepSize < 1) {
+        alert('Z轴步长最小值为1μm，请重新输入');
+        stepSizeInput.value = 1;
+        return;
+    }
     // 步长单位是微米，1微米 = 1步（0.001mm = 1步），后退为负值
     socket.emit('move_z', { steps: -stepSize });
 }
@@ -970,6 +979,23 @@ document.addEventListener('DOMContentLoaded', function() {
 
     if (zLevelSlider && zLevelValue) {
         zLevelSlider.addEventListener('input', () => updateValueAndSend(zLevelSlider, zLevelValue, 'set_z_level', ' 微米'));
+    }
+
+    // Add change event listener for Z step size input - 自动保存Z步长
+    const zStepSizeInput = document.getElementById('zStepSize');
+    if (zStepSizeInput) {
+        zStepSizeInput.addEventListener('change', function() {
+            const stepSize = parseInt(this.value) || 0;
+            if (stepSize < 1) {
+                alert('Z轴步长最小值为1μm，请重新输入');
+                this.value = 1;
+                return;
+            }
+            // 自动保存Z步长到settings.json
+            socket.emit('save_config', { 
+                z_step_size: stepSize
+            });
+        });
     }
 
     // Add click handler to indicator - 只用于显示状态，不触发功能

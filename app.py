@@ -397,6 +397,13 @@ def handle_connect():
         'z_level': config.z_level  # 添加景深堆叠Z Level参数到初始数据中
     }
     emit('settings_update', initial_data)
+    
+    # 检查并发送WiFi权限状态
+    wifi_permissions_ok = check_wifi_permissions()
+    emit('wifi_permissions_status', {
+        'has_permissions': wifi_permissions_ok,
+        'message': 'WiFi权限已配置' if wifi_permissions_ok else 'WiFi权限未配置，请运行 sudo bash setup_wifi_permissions.sh'
+    })
 
 
 @socketio.on('disconnect')
@@ -425,6 +432,59 @@ def handle_disconnect():
 def handle_get_settings():
     settings = config.load_settings()
     emit('settings_update', settings)
+
+
+@socketio.on('check_wifi_permissions')
+def handle_check_wifi_permissions():
+    """检查WiFi权限状态"""
+    try:
+        has_permissions = check_wifi_permissions()
+        emit('wifi_permissions_status', {
+            'has_permissions': has_permissions,
+            'message': 'WiFi权限已配置' if has_permissions else 'WiFi权限未配置，请运行 sudo bash setup_wifi_permissions.sh'
+        })
+    except Exception as e:
+        print(f"Error checking WiFi permissions: {e}")
+        emit('wifi_permissions_status', {
+            'has_permissions': False,
+            'message': f'检查权限时出错: {str(e)}'
+        })
+
+
+@socketio.on('setup_wifi_permissions')
+def handle_setup_wifi_permissions():
+    """手动触发WiFi权限配置"""
+    try:
+        send_log_message('开始配置WiFi权限...', 'info')
+        emit('wifi_permissions_setup', {
+            'status': 'starting',
+            'message': '正在配置WiFi权限...'
+        })
+        
+        success = setup_wifi_permissions()
+        
+        if success:
+            emit('wifi_permissions_setup', {
+                'status': 'success',
+                'message': 'WiFi权限配置成功'
+            })
+            emit('wifi_permissions_status', {
+                'has_permissions': True,
+                'message': 'WiFi权限已配置'
+            })
+        else:
+            emit('wifi_permissions_setup', {
+                'status': 'error',
+                'message': 'WiFi权限配置失败，请手动运行 sudo bash setup_wifi_permissions.sh'
+            })
+            
+    except Exception as e:
+        print(f"Error setting up WiFi permissions: {e}")
+        send_log_message(f'配置WiFi权限时出错: {str(e)}', 'error')
+        emit('wifi_permissions_setup', {
+            'status': 'error',
+            'message': f'配置权限时出错: {str(e)}'
+        })
 
 
 @socketio.on('capture')
@@ -1378,6 +1438,74 @@ def handle_delete_video(data):
         emit('delete_video_response', {'success': False, 'error': str(e)})
 
 
+def check_wifi_permissions():
+    """检查WiFi管理权限是否已配置"""
+    try:
+        import subprocess
+        # 检查sudoers文件是否存在
+        sudoers_file = '/etc/sudoers.d/microscope-wifi'
+        if os.path.exists(sudoers_file):
+            # 测试是否有nmcli权限
+            test_result = subprocess.run(['sudo', '-n', 'nmcli', 'device', 'status'], 
+                                        capture_output=True, text=True, timeout=5)
+            return test_result.returncode == 0
+        return False
+    except Exception as e:
+        print(f"Error checking WiFi permissions: {e}")
+        return False
+
+
+def setup_wifi_permissions():
+    """自动配置WiFi管理权限"""
+    try:
+        import subprocess
+        
+        # 获取脚本路径
+        script_path = '/home/admin/Documents/microscopy/setup_wifi_permissions.sh'
+        
+        # 检查脚本是否存在
+        if not os.path.exists(script_path):
+            print(f"权限设置脚本不存在: {script_path}")
+            return False
+        
+        # 确保脚本有执行权限
+        os.chmod(script_path, 0o755)
+        
+        print("正在自动配置WiFi权限...")
+        send_log_message('正在自动配置WiFi权限...', 'info')
+        
+        # 使用sudo运行脚本（需要用户有sudo权限）
+        result = subprocess.run(['sudo', 'bash', script_path], 
+                              capture_output=True, text=True, timeout=30)
+        
+        if result.returncode == 0:
+            print("✅ WiFi权限配置成功")
+            send_log_message('WiFi权限配置成功', 'success')
+            
+            # 验证配置是否生效
+            time.sleep(0.5)  # 等待配置生效
+            if check_wifi_permissions():
+                return True
+            else:
+                print("⚠️  权限配置完成，但验证失败，可能需要重新启动服务")
+                send_log_message('权限配置完成，但验证失败，可能需要重新启动服务', 'warning')
+                return False
+        else:
+            error_msg = result.stderr.strip() if result.stderr else result.stdout.strip()
+            print(f"❌ WiFi权限配置失败: {error_msg}")
+            send_log_message(f'WiFi权限配置失败: {error_msg}', 'error')
+            return False
+            
+    except subprocess.TimeoutExpired:
+        print("❌ WiFi权限配置超时")
+        send_log_message('WiFi权限配置超时', 'error')
+        return False
+    except Exception as e:
+        print(f"❌ WiFi权限配置出错: {e}")
+        send_log_message(f'WiFi权限配置出错: {str(e)}', 'error')
+        return False
+
+
 @socketio.on('get_wifi_status')
 def handle_get_wifi_status():
     """获取当前WiFi连接状态 - 使用iw和nmcli，与系统WiFi Manager一致"""
@@ -1391,7 +1519,7 @@ def handle_get_wifi_status():
         
         # 方法1: 使用iw获取WiFi状态（推荐，最准确）
         try:
-            iw_result = subprocess.run(['iw', 'dev', 'wlan0', 'link'], 
+            iw_result = subprocess.run(['sudo', 'iw', 'dev', 'wlan0', 'link'], 
                                       capture_output=True, text=True, timeout=5)
             if iw_result.returncode == 0 and 'Connected to' in iw_result.stdout:
                 # 获取SSID
@@ -1407,7 +1535,7 @@ def handle_get_wifi_status():
         except Exception as e:
             print(f"Error getting info from iw: {e}")
         
-        # 方法2: 从ip命令获取IP地址
+        # 方法2: 从ip命令获取IP地址（不需要sudo）
         try:
             ip_result = subprocess.run(['ip', '-4', 'addr', 'show', 'wlan0'], 
                                      capture_output=True, text=True, timeout=5)
@@ -1421,7 +1549,7 @@ def handle_get_wifi_status():
         # 方法3: 如果还没有获取到SSID，尝试从iwgetid获取
         if not ssid:
             try:
-                result = subprocess.run(['iwgetid', '-r'], 
+                result = subprocess.run(['sudo', 'iwgetid', '-r'], 
                                       capture_output=True, text=True, timeout=5)
                 if result.returncode == 0:
                     ssid = result.stdout.strip()
@@ -1451,8 +1579,8 @@ def handle_scan_wifi():
         
         send_log_message('开始扫描WiFi网络...', 'info')
         
-        # 使用nmcli扫描WiFi网络（与系统管理器一致）
-        result = subprocess.run(['nmcli', '-t', '-f', 'SSID,SIGNAL,SECURITY', 'device', 'wifi', 'list'], 
+        # 使用sudo执行nmcli扫描WiFi网络（与系统管理器一致）
+        result = subprocess.run(['sudo', 'nmcli', '-t', '-f', 'SSID,SIGNAL,SECURITY', 'device', 'wifi', 'list'], 
                               capture_output=True, text=True, timeout=30)
         
         networks = []
@@ -1483,6 +1611,61 @@ def handle_scan_wifi():
             
             networks = list(seen_ssids.values())
             networks.sort(key=lambda x: x.get('signal', 0), reverse=True)
+        else:
+            # 如果权限不足，尝试自动配置权限
+            error_msg = result.stderr.strip() if result.stderr else 'Permission denied'
+            if 'permission' in error_msg.lower() or 'sudo' in error_msg.lower():
+                send_log_message('WiFi扫描失败：权限不足，正在尝试自动配置权限...', 'warning')
+                
+                # 尝试自动配置权限
+                if setup_wifi_permissions():
+                    # 配置成功后，重新尝试扫描
+                    send_log_message('权限配置成功，重新尝试扫描WiFi...', 'info')
+                    time.sleep(1)  # 等待配置生效
+                    
+                    # 重新执行扫描命令
+                    retry_result = subprocess.run(['sudo', 'nmcli', '-t', '-f', 'SSID,SIGNAL,SECURITY', 'device', 'wifi', 'list'], 
+                                                  capture_output=True, text=True, timeout=30)
+                    
+                    if retry_result.returncode == 0:
+                        # 解析网络列表
+                        seen_ssids = {}
+                        for line in retry_result.stdout.split('\n'):
+                            if not line.strip():
+                                continue
+                            parts = line.split(':')
+                            if len(parts) >= 2:
+                                ssid = parts[0].strip()
+                                signal_str = parts[1].strip() if len(parts) > 1 else '0'
+                                security = parts[2].strip() if len(parts) > 2 else '--'
+                                if ssid:
+                                    signal = int(signal_str) if signal_str.isdigit() else 0
+                                    if ssid not in seen_ssids or seen_ssids[ssid]['signal'] < signal:
+                                        seen_ssids[ssid] = {
+                                            'ssid': ssid,
+                                            'signal': signal,
+                                            'security': 'WPA2' if security else None
+                                        }
+                        networks = list(seen_ssids.values())
+                        networks.sort(key=lambda x: x.get('signal', 0), reverse=True)
+                        send_log_message(f'WiFi扫描完成，发现 {len(networks)} 个网络', 'success')
+                        emit('wifi_scan_result', {
+                            'success': True,
+                            'networks': networks
+                        })
+                        return
+                    else:
+                        emit('wifi_scan_result', {
+                            'success': False,
+                            'error': '权限配置后扫描仍然失败'
+                        })
+                        return
+                else:
+                    emit('wifi_scan_result', {
+                        'success': False,
+                        'error': '权限不足，自动配置失败，请手动运行 sudo bash setup_wifi_permissions.sh'
+                    })
+                    return
         
         send_log_message(f'WiFi扫描完成，发现 {len(networks)} 个网络', 'success')
         
@@ -1529,18 +1712,18 @@ def handle_connect_wifi(data):
         import subprocess
         
         try:
-            # 使用nmcli连接WiFi（推荐方式，与系统管理器一致）
+            # 使用sudo执行nmcli连接WiFi（推荐方式，与系统管理器一致）
             # nmcli会自动选择最佳信道和处理所有细节
             
             if password:
                 # 加密网络连接
                 result = subprocess.run([
-                    'nmcli', 'device', 'wifi', 'connect', ssid, 'password', password
+                    'sudo', 'nmcli', 'device', 'wifi', 'connect', ssid, 'password', password
                 ], capture_output=True, text=True, timeout=20)
             else:
                 # 开放网络连接
                 result = subprocess.run([
-                    'nmcli', 'device', 'wifi', 'connect', ssid
+                    'sudo', 'nmcli', 'device', 'wifi', 'connect', ssid
                 ], capture_output=True, text=True, timeout=20)
             
             if result.returncode == 0:
@@ -1551,7 +1734,47 @@ def handle_connect_wifi(data):
                 })
             else:
                 # 解析错误信息
-                error_msg = result.stderr.strip() if result.stderr else 'Connection failed'
+                error_msg = result.stderr.strip() if result.stderr else result.stdout.strip() if result.stdout else 'Connection failed'
+                # 检查是否是权限问题
+                if 'permission' in error_msg.lower() or 'sudo' in error_msg.lower() or 'not allowed' in error_msg.lower():
+                    send_log_message('WiFi连接失败：权限不足，正在尝试自动配置权限...', 'warning')
+                    
+                    # 尝试自动配置权限
+                    if setup_wifi_permissions():
+                        # 配置成功后，重新尝试连接
+                        send_log_message('权限配置成功，重新尝试连接WiFi...', 'info')
+                        time.sleep(1)  # 等待配置生效
+                        
+                        # 重新执行连接命令
+                        if password:
+                            retry_result = subprocess.run([
+                                'sudo', 'nmcli', 'device', 'wifi', 'connect', ssid, 'password', password
+                            ], capture_output=True, text=True, timeout=20)
+                        else:
+                            retry_result = subprocess.run([
+                                'sudo', 'nmcli', 'device', 'wifi', 'connect', ssid
+                            ], capture_output=True, text=True, timeout=20)
+                        
+                        if retry_result.returncode == 0:
+                            send_log_message(f'WiFi连接成功: {ssid}', 'success')
+                            emit('wifi_connect_result', {
+                                'success': True,
+                                'ssid': ssid
+                            })
+                            return
+                        else:
+                            retry_error = retry_result.stderr.strip() if retry_result.stderr else retry_result.stdout.strip() if retry_result.stdout else 'Connection failed'
+                            emit('wifi_connect_result', {
+                                'success': False,
+                                'error': f'权限配置后连接仍然失败: {retry_error}'
+                            })
+                            return
+                    else:
+                        emit('wifi_connect_result', {
+                            'success': False,
+                            'error': '权限不足，自动配置失败，请手动运行 sudo bash setup_wifi_permissions.sh'
+                        })
+                        return
                 raise Exception(f"WiFi连接失败: {error_msg}")
                 
         except subprocess.TimeoutExpired:
@@ -1978,6 +2201,20 @@ if __name__ == "__main__":
     
     # 启动时清理缓存文件
     cleanup_static_files()
+    
+    # 检查WiFi权限配置
+    print("检查WiFi管理权限...")
+    if check_wifi_permissions():
+        print("✅ WiFi权限已配置")
+    else:
+        print("⚠️  WiFi权限未配置，正在尝试自动配置...")
+        # 尝试自动配置权限
+        if setup_wifi_permissions():
+            print("✅ WiFi权限自动配置成功")
+        else:
+            print("⚠️  WiFi权限自动配置失败，WiFi功能可能无法正常工作")
+            print("   请手动运行以下命令配置权限:")
+            print("   sudo bash /home/admin/Documents/microscopy/setup_wifi_permissions.sh")
     
     # Start motor position update thread
     motor_position_thread = threading.Thread(target=send_motor_positions, daemon=True)

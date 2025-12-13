@@ -15,6 +15,7 @@ import numpy as np
 import base64
 import io
 from utils import stitch_images, focus_stack, count_cells
+from vllm_inference import vllm_chat_stream
 
 
 class ConfigManager:
@@ -109,6 +110,9 @@ class ConfigManager:
 # 创建全局配置管理器实例
 config = ConfigManager()
 
+# 存储每个用户的对话历史 {session_id: [{"role": "user", "content": "..."}, ...]}
+conversation_histories = {}
+
 imx477_dict = {
     "preview_size": (1014, 760),  # 预览分辨率
     "video_size": (2028, 1520),   # 视频分辨率
@@ -124,7 +128,8 @@ imx219_dict = {
 
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
+# 增加SocketIO消息大小限制，支持大图片传输（50MB）
+socketio = SocketIO(app, cors_allowed_origins="*", max_http_buffer_size=50*1024*1024)
 
 # 日志发送函数
 def send_log_message(message, log_type='info'):
@@ -411,6 +416,11 @@ def handle_disconnect():
     print('Client disconnected')
     send_log_message('客户端已断开连接', 'warning')
     """断开连接时，停止所有功能"""
+    # 清理对话历史
+    session_id = request.sid
+    if session_id in conversation_histories:
+        del conversation_histories[session_id]
+    
     config.is_veiwing = False
     config.is_recording = False
     config.is_recording_cam1 = False
@@ -2003,6 +2013,375 @@ def handle_system_update(data):
             send_log_message(f'服务重启异常: {str(restart_error)}', 'error')
 
 
+@socketio.on('vllm_chat')
+def handle_vllm_chat(data):
+    """处理VLM对话请求，支持流式输出"""
+    full_response = ""
+    try:
+        image_base64 = data.get('image_base64', None)  # base64编码的图片
+        user_text = data.get('text', '')  # 用户输入的文本
+        session_id = request.sid  # 获取当前会话ID
+        
+        # 获取模型名称用于日志
+        try:
+            from vllm_inference import load_model_name
+            model_name = load_model_name()
+        except:
+            model_name = "未知模型"
+        
+        # 记录对话请求日志
+        log_parts = []
+        log_parts.append(f"VLM对话请求")
+        if image_base64:
+            image_size_mb = len(image_base64) * 3 / 4 / 1024 / 1024
+            log_parts.append(f"图片: {image_size_mb:.2f}MB")
+        if user_text:
+            text_preview = user_text[:30] + "..." if len(user_text) > 30 else user_text
+            log_parts.append(f"文本: {text_preview}")
+        log_parts.append(f"模型: {model_name}")
+        send_log_message(" | ".join(log_parts), 'info')
+          
+        if not user_text and not image_base64:
+            send_log_message('VLM对话错误: 请输入文本或上传图片', 'error')
+            emit('vllm_chat_error', {'error': '请输入文本或上传图片'})
+            return
+        
+        # 检查图片大小
+        if image_base64:
+            image_size_mb = len(image_base64) * 3 / 4 / 1024 / 1024  # base64编码后大小约为原图的4/3
+            print(f"图片大小: {image_size_mb:.2f} MB")
+            if image_size_mb > 20:
+                send_log_message(f'VLM图片过大 ({image_size_mb:.2f}MB)，建议压缩后重试', 'warning')
+        
+        # 获取或初始化对话历史
+        if session_id not in conversation_histories:
+            conversation_histories[session_id] = []
+        
+        conversation_history = conversation_histories[session_id].copy()
+        
+        # 发送开始信号
+        emit('vllm_chat_start', {'message': '开始处理...'})
+        
+        # 调用VLM推理函数，流式返回结果
+        has_received_content = False
+        chunk_count = 0
+        try:
+            for chunk in vllm_chat_stream(image_base64, user_text, conversation_history, enable_thinking=True):
+                chunk_count += 1
+                if chunk['type'] == 'error':
+                    error_msg = chunk['content']
+                    send_log_message(f'VLM推理错误: {error_msg}', 'error')
+                    emit('vllm_chat_error', {'error': error_msg})
+                    return
+                elif chunk['type'] == 'thinking':
+                    # 思考过程（可选，前端可以选择是否显示）
+                    emit('vllm_chat_thinking', {'content': chunk['content'], 'is_first': chunk.get('is_first', False)})
+                elif chunk['type'] == 'content':
+                    # 回复内容，实时发送
+                    has_received_content = True
+                    full_response += chunk['content']
+                    try:
+                        emit('vllm_chat_chunk', {
+                            'content': chunk['content'],
+                            'is_first': chunk.get('is_first', False),
+                            'full_response': full_response
+                        })
+                    except Exception as emit_error:
+                        print(f"发送chunk时出错: {emit_error}")
+                        raise
+                elif chunk['type'] == 'done':
+                    # 对话完成，更新对话历史
+                    # 只有在收到内容时才保存到历史
+                    if has_received_content and full_response:
+                        # 添加用户消息到历史
+                        user_message = {"role": "user", "content": []}
+                        if image_base64:
+                            mime_type = 'image/jpeg'
+                            image_data_url = f"data:{mime_type};base64,{image_base64}"
+                            user_message["content"].append({
+                                "type": "image_url",
+                                "image_url": {"url": image_data_url}
+                            })
+                        if user_text:
+                            user_message["content"].append({"type": "text", "text": user_text})
+                        
+                        conversation_histories[session_id].append(user_message)
+                        
+                        # 添加助手回复到历史
+                        conversation_histories[session_id].append({
+                            "role": "assistant",
+                            "content": full_response
+                        })
+                    
+                    # 发送完成信号
+                    print(f"VLM推理完成，共收到 {chunk_count} 个chunk，回复长度: {len(full_response)}")
+                    send_log_message(f'VLM推理完成: 收到{chunk_count}个chunk，回复长度{len(full_response)}字符', 'success')
+                    emit('vllm_chat_done', {
+                        'full_response': full_response,
+                        'usage': chunk.get('usage', None)
+                    })
+                    return
+        except Exception as stream_error:
+            print(f"流式处理错误: {stream_error}")
+            import traceback
+            traceback.print_exc()
+            error_msg = f'流式处理错误: {str(stream_error)}'
+            send_log_message(f'VLM {error_msg}', 'error')
+            emit('vllm_chat_error', {'error': error_msg})
+            return
+        
+        # 如果循环正常结束但没有收到done信号，发送完成信号
+        print(f"循环正常结束，has_received_content={has_received_content}, chunk_count={chunk_count}")
+        if has_received_content:
+            # 更新对话历史
+            user_message = {"role": "user", "content": []}
+            if image_base64:
+                mime_type = 'image/jpeg'
+                image_data_url = f"data:{mime_type};base64,{image_base64}"
+                user_message["content"].append({
+                    "type": "image_url",
+                    "image_url": {"url": image_data_url}
+                })
+            if user_text:
+                user_message["content"].append({"type": "text", "text": user_text})
+            
+            conversation_histories[session_id].append(user_message)
+            conversation_histories[session_id].append({
+                "role": "assistant",
+                "content": full_response
+            })
+            
+            send_log_message(f'VLM推理完成: 收到{chunk_count}个chunk，回复长度{len(full_response)}字符', 'success')
+            emit('vllm_chat_done', {
+                'full_response': full_response,
+                'usage': None
+            })
+        else:
+            # 如果没有收到任何内容，可能是错误
+            error_msg = '未收到模型回复，请稍后重试'
+            send_log_message(f'VLM {error_msg}', 'error')
+            emit('vllm_chat_error', {'error': error_msg})
+        
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"VLM chat error: {e}")
+        print(f"Traceback: {error_trace}")
+        send_log_message(f'VLM对话失败: {str(e)}', 'error')
+        emit('vllm_chat_error', {'error': str(e)})
+
+
+@socketio.on('clear_vllm_history')
+def handle_clear_vllm_history():
+    """清空当前用户的对话历史"""
+    try:
+        session_id = request.sid
+        if session_id in conversation_histories:
+            conversation_histories[session_id] = []
+            emit('vllm_history_cleared', {'success': True})
+        else:
+            emit('vllm_history_cleared', {'success': True})
+    except Exception as e:
+        print(f"Clear VLM history error: {e}")
+        emit('vllm_history_cleared', {'success': False, 'error': str(e)})
+
+
+@socketio.on('get_vllm_api_key')
+def handle_get_vllm_api_key():
+    """获取当前VLM API Key状态（不返回实际key，只返回是否已配置）"""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        api_key = os.getenv("VLLM_API_KEY")
+        has_key = api_key is not None and api_key.strip() != ""
+        emit('vllm_api_key_status', {
+            'has_key': has_key,
+            'message': 'API Key已配置' if has_key else 'API Key未配置'
+        })
+    except Exception as e:
+        print(f"Get VLM API key error: {e}")
+        emit('vllm_api_key_status', {
+            'has_key': False,
+            'message': f'检查API Key时出错: {str(e)}'
+        })
+
+
+@socketio.on('get_system_prompt')
+def handle_get_system_prompt():
+    """获取当前系统提示词、模型名称和模型URL，如果文件不存在则自动创建"""
+    try:
+        from vllm_inference import load_system_prompt, load_model_name, load_model_url
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        prompt_file = os.path.join(base_dir, 'system_prompt.json')
+        
+        # 如果文件不存在，自动创建默认配置文件
+        if not os.path.exists(prompt_file):
+            default_data = {
+                'system_prompt': '你是显微镜图像分析助手，请根据用户的问题和上传的图片，给出详细的分析和回答。你擅长样本的定量分割、计数、识别等。禁止长篇大论，禁止废话连篇，要求回答简洁有关键信息。',
+                'model_name': 'qwen3-vl-plus',
+                'model_url': 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+            }
+            with open(prompt_file, 'w', encoding='utf-8') as f:
+                json.dump(default_data, f, ensure_ascii=False, indent=2)
+            send_log_message('system_prompt.json文件已自动创建', 'info')
+        
+        prompt = load_system_prompt()
+        model_name = load_model_name()
+        model_url = load_model_url()
+        emit('system_prompt_response', {
+            'success': True,
+            'prompt': prompt,
+            'model_name': model_name,
+            'model_url': model_url
+        })
+    except Exception as e:
+        print(f"Get system prompt error: {e}")
+        emit('system_prompt_response', {
+            'success': False,
+            'error': str(e)
+        })
+
+
+@socketio.on('save_system_prompt')
+def handle_save_system_prompt(data):
+    """保存系统提示词、模型名称和模型URL到system_prompt.json文件"""
+    try:
+        prompt_text = data.get('prompt', '').strip()
+        model_name = data.get('model_name', 'qwen3-vl-plus').strip()
+        model_url = data.get('model_url', 'https://dashscope.aliyuncs.com/compatible-mode/v1').strip()
+        
+        if not prompt_text:
+            emit('system_prompt_saved', {
+                'success': False,
+                'error': '系统提示词不能为空'
+            })
+            return
+        
+        if not model_name:
+            model_name = 'qwen3-vl-plus'  # 默认模型名称
+        
+        if not model_url:
+            model_url = 'https://dashscope.aliyuncs.com/compatible-mode/v1'  # 默认URL
+        
+        # system_prompt.json文件路径
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        prompt_file = os.path.join(base_dir, 'system_prompt.json')
+        
+        # 保存到JSON文件
+        prompt_data = {
+            'system_prompt': prompt_text,
+            'model_name': model_name,
+            'model_url': model_url
+        }
+        
+        with open(prompt_file, 'w', encoding='utf-8') as f:
+            json.dump(prompt_data, f, ensure_ascii=False, indent=2)
+        
+        # 如果URL或模型名称改变，重置OpenAI客户端
+        from vllm_inference import reset_openai_client
+        reset_openai_client()
+        
+        send_log_message(f'系统提示词、模型名称和URL已保存 (模型: {model_name}, URL: {model_url})', 'success')
+        emit('system_prompt_saved', {
+            'success': True,
+            'message': f'系统提示词、模型名称和URL已保存 (模型: {model_name})'
+        })
+        
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Save system prompt error: {e}")
+        print(f"Traceback: {error_trace}")
+        send_log_message(f'保存系统提示词失败: {str(e)}', 'error')
+        emit('system_prompt_saved', {
+            'success': False,
+            'error': str(e)
+        })
+
+
+@socketio.on('save_vllm_api_key')
+def handle_save_vllm_api_key(data):
+    """保存VLM API Key到.env文件"""
+    try:
+        api_key = data.get('api_key', '').strip()
+        if not api_key:
+            emit('vllm_api_key_saved', {
+                'success': False,
+                'error': 'API Key不能为空'
+            })
+            return
+        
+        # .env文件路径
+        env_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+        
+        # 检查.env文件是否存在
+        file_exists = os.path.exists(env_file_path)
+        
+        # 读取现有.env文件内容（如果存在）
+        env_lines = []
+        key_exists = False
+        if file_exists:
+            try:
+                with open(env_file_path, 'r', encoding='utf-8') as f:
+                    env_lines = f.readlines()
+            except Exception as e:
+                send_log_message(f'读取.env文件失败: {str(e)}，将创建新文件', 'warning')
+                env_lines = []
+        
+        # 更新或添加VLLM_API_KEY
+        new_lines = []
+        for line in env_lines:
+            stripped_line = line.strip()
+            # 跳过空行和注释行
+            if not stripped_line or stripped_line.startswith('#'):
+                new_lines.append(line)
+            elif stripped_line.startswith('VLLM_API_KEY='):
+                new_lines.append(f'VLLM_API_KEY={api_key}\n')
+                key_exists = True
+            else:
+                new_lines.append(line)
+        
+        # 如果VLLM_API_KEY不存在，添加到文件末尾
+        if not key_exists:
+            # 如果文件不为空且最后一行没有换行符，先添加换行
+            if new_lines and not new_lines[-1].endswith('\n'):
+                new_lines[-1] = new_lines[-1].rstrip() + '\n'
+            new_lines.append(f'VLLM_API_KEY={api_key}\n')
+        
+        # 写入.env文件（如果文件不存在会自动创建）
+        try:
+            with open(env_file_path, 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+            
+            if not file_exists:
+                send_log_message('.env文件已自动创建', 'info')
+        except Exception as e:
+            raise Exception(f'写入.env文件失败: {str(e)}')
+        
+        # 重新加载环境变量并重置OpenAI客户端
+        from dotenv import load_dotenv
+        from vllm_inference import reset_openai_client
+        load_dotenv(override=True)
+        reset_openai_client()  # 重置客户端以使用新的API key
+        
+        send_log_message('VLM API Key已保存', 'success')
+        emit('vllm_api_key_saved', {
+            'success': True,
+            'message': 'API Key已保存，请重启服务以生效'
+        })
+        
+    except Exception as e:
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"Save VLM API key error: {e}")
+        print(f"Traceback: {error_trace}")
+        send_log_message(f'保存VLM API Key失败: {str(e)}', 'error')
+        emit('vllm_api_key_saved', {
+            'success': False,
+            'error': str(e)
+        })
+
+
 @socketio.on('check_update')
 def handle_check_update():
     """检查是否有可用的更新"""
@@ -2196,8 +2575,119 @@ def cleanup_static_files():
         print(f"清理缓存文件时出错: {e}")
 
 
+def check_and_install_dependencies():
+    """检查并安装requirements.txt中的依赖包"""
+    try:
+        import subprocess
+        import sys
+        import re
+        
+        # requirements.txt文件路径
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        requirements_file = os.path.join(base_dir, 'requirements.txt')
+        
+        if not os.path.exists(requirements_file):
+            print("⚠️  requirements.txt文件不存在，跳过依赖检查")
+            return True
+        
+        print("检查Python依赖包...")
+        
+        # 读取requirements.txt
+        required_packages = []
+        with open(requirements_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # 跳过注释和空行
+                if not line or line.startswith('#'):
+                    continue
+                # 解析包名（处理版本号）
+                # 例如: Flask==2.2.2 或 openai>=1.0.0
+                match = re.match(r'^([a-zA-Z0-9_-]+[a-zA-Z0-9_.-]*)(.*)$', line)
+                if match:
+                    package_name = match.group(1)
+                    required_packages.append((package_name, line))
+        
+        if not required_packages:
+            print("✅ requirements.txt中没有需要安装的包")
+            return True
+        
+        # 检查已安装的包
+        try:
+            result = subprocess.run([sys.executable, '-m', 'pip', 'list', '--format=freeze'], 
+                                  capture_output=True, text=True, timeout=30)
+            installed_packages = {}
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if '==' in line:
+                        parts = line.split('==')
+                        if len(parts) == 2:
+                            installed_packages[parts[0].lower()] = parts[1]
+        except Exception as e:
+            print(f"⚠️  检查已安装包时出错: {e}")
+            installed_packages = {}
+        
+        # 检查缺失的包
+        missing_packages = []
+        for package_name, full_spec in required_packages:
+            # 标准化包名（转换为小写，处理包名差异）
+            normalized_name = package_name.lower().replace('_', '-').replace('.', '-')
+            found = False
+            
+            # 检查各种可能的包名格式
+            for installed_name in installed_packages.keys():
+                if (installed_name == normalized_name or 
+                    installed_name == package_name.lower() or
+                    installed_name.replace('-', '_') == package_name.lower() or
+                    installed_name.replace('-', '_') == normalized_name):
+                    found = True
+                    break
+            
+            if not found:
+                missing_packages.append(full_spec)
+        
+        if not missing_packages:
+            print("✅ 所有依赖包已安装")
+            return True
+        
+        # 安装缺失的包
+        print(f"发现 {len(missing_packages)} 个缺失的依赖包，开始自动安装...")
+        for i, package_spec in enumerate(missing_packages, 1):
+            print(f"[{i}/{len(missing_packages)}] 正在安装: {package_spec}")
+            try:
+                result = subprocess.run(
+                    [sys.executable, '-m', 'pip', 'install', package_spec],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5分钟超时
+                )
+                if result.returncode == 0:
+                    print(f"  ✅ {package_spec} 安装成功")
+                else:
+                    error_msg = result.stderr.strip() if result.stderr else result.stdout.strip()
+                    print(f"  ⚠️  {package_spec} 安装失败: {error_msg}")
+                    # 继续安装其他包，不中断
+            except subprocess.TimeoutExpired:
+                print(f"  ⚠️  {package_spec} 安装超时")
+            except Exception as e:
+                print(f"  ⚠️  {package_spec} 安装出错: {e}")
+        
+        print("✅ 依赖包检查和安装完成")
+        return True
+        
+    except Exception as e:
+        print(f"⚠️  依赖检查过程出错: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 if __name__ == "__main__":
     print("Starting Microscope Control System...")
+    
+    # 检查并安装依赖
+    print("=" * 50)
+    check_and_install_dependencies()
+    print("=" * 50)
     
     # 启动时清理缓存文件
     cleanup_static_files()

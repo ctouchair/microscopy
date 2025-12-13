@@ -57,9 +57,9 @@ class motor():
         self.i2c = busio.I2C(board.SCL, board.SDA)
         self.ads = ADS.ADS1115(self.i2c, address=0x49)
 
-        self.channel_Z = AnalogIn(self.ads, ADS.P0, ADS.P3)#
-        self.channel_Y = AnalogIn(self.ads, ADS.P1, ADS.P3)#
-        self.channel_X = AnalogIn(self.ads, ADS.P2, ADS.P3)#, ADS.P3
+        self.channel_Z = AnalogIn(self.ads, ADS.P0)# , ADS.P3
+        self.channel_Y = AnalogIn(self.ads, ADS.P1)# , ADS.P3
+        self.channel_X = AnalogIn(self.ads, ADS.P2)#, ADS.P3
         self.channel_R = AnalogIn(self.ads, ADS.P3)
        
         self.status = False

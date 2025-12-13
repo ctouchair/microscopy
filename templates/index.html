@@ -17,6 +17,88 @@
                 <canvas id="videoCanvas" width="1014" height="760"></canvas>
                 <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Feed" style="display: none;"/>
             </div>
+            
+            <!-- VLM对话和系统提示词容器 -->
+            <div class="vllm-wrapper">
+                <!-- VLM对话窗口 -->
+                <div class="vllm-chat-container">
+                    <div class="vllm-chat-header">
+                        <h4><i class="fas fa-comments"></i> VLM 智能对话</h4>
+                        <div class="vllm-chat-controls">
+                            <button id="vllmApiKeyBtn" class="log-btn" onclick="openVllmApiKeyModal()" title="配置API Key">
+                                <i class="fas fa-key"></i> API Key
+                            </button>
+                            <button id="clearVllmHistory" class="log-btn" onclick="clearVllmHistory()" title="清空对话历史">
+                                <i class="fas fa-trash"></i> 清空
+                            </button>
+                            <button id="toggleVllmChat" class="log-btn" onclick="toggleVllmChat()" title="收起/展开">
+                                <i class="fas fa-chevron-up"></i> 收起
+                            </button>
+                        </div>
+                    </div>
+                    <div id="vllmChatContent" class="vllm-chat-content">
+                        <div class="vllm-welcome-message">
+                            <i class="fas fa-robot"></i> 你好！我是VLM智能助手，可以直接输入问题进行对话，也可以上传图片进行分析。
+                        </div>
+                    </div>
+                    <div class="vllm-chat-input-container">
+                        <div class="vllm-chat-input-wrapper">
+                            <input type="file" id="vllmImageInput" accept="image/*" style="display: none;" onchange="handleImageSelect(event)">
+                            <button id="selectImageBtn" class="vllm-btn-use-image" onclick="selectLocalImage()" title="选择本地图片">
+                                <i class="fas fa-image"></i> 选择图片
+                            </button>
+                            <span id="selectedImageName" class="vllm-selected-image-name" style="display: none;">
+                                <span class="image-name-text"></span>
+                                <button class="image-name-remove" onclick="removeSelectedImage()" title="清除图片">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </span>
+                            <input type="text" id="vllmChatInput" class="vllm-chat-input" placeholder="输入你的问题..." onkeypress="handleVllmChatKeyPress(event)">
+                            <button id="sendVllmMessage" class="vllm-chat-send-btn" onclick="sendVllmMessage()" title="发送消息">
+                                <i class="fas fa-paper-plane"></i> 发送
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 系统提示词编辑模块 -->
+                <div class="system-prompt-container">
+                    <div class="system-prompt-header">
+                        <h4><i class="fas fa-edit"></i> 系统提示词</h4>
+                        <div class="system-prompt-controls">
+                            <button id="saveSystemPromptBtn" class="log-btn" onclick="saveSystemPrompt()" title="保存提示词">
+                                <i class="fas fa-save"></i> 保存
+                            </button>
+                            <button id="resetSystemPromptBtn" class="log-btn" onclick="resetSystemPrompt()" title="重置为默认">
+                                <i class="fas fa-undo"></i> 重置
+                            </button>
+                            <button id="toggleSystemPrompt" class="log-btn" onclick="toggleSystemPrompt()" title="收起/展开">
+                                <i class="fas fa-chevron-up"></i> 收起
+                            </button>
+                        </div>
+                    </div>
+                    <div id="systemPromptContent" class="system-prompt-content">
+                        <div class="system-prompt-input-wrapper">
+                            <textarea id="systemPromptTextarea" class="system-prompt-textarea" placeholder="请输入系统提示词..."></textarea>
+                            <div class="model-config-wrapper">
+                                <div class="model-name-input-wrapper">
+                                    <label for="modelNameInput" class="model-name-label">
+                                        <i class="fas fa-brain"></i> 模型名称：
+                                    </label>
+                                    <input type="text" id="modelNameInput" class="model-name-input" placeholder="例如: qwen3-vl-plus" value="qwen3-vl-plus">
+                                </div>
+                                <div class="model-url-input-wrapper">
+                                    <label for="modelUrlInput" class="model-name-label">
+                                        <i class="fas fa-link"></i> API URL：
+                                    </label>
+                                    <input type="text" id="modelUrlInput" class="model-name-input" placeholder="例如: https://dashscope.aliyuncs.com/compatible-mode/v1" value="https://dashscope.aliyuncs.com/compatible-mode/v1">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
             <div class="preview-cam1">
                 <div class="cam1-header">
                     <h3><i class="fas fa-video"></i> 辅助摄像头预览</h3>
@@ -50,6 +132,80 @@
         <div class="controls">
             <div class="controls-header">
                 <h2><i class="fas fa-microscope"></i> 显微镜控制系统</h2>
+            </div>
+            
+            <div class="control-section">
+                <h4><i class="fas fa-arrows-alt"></i> 位置控制</h4>
+                
+                <!-- X方向 -->
+                <div class="position-row">
+                    <span id="x_value" class="slider-value">X目标位置：0.00 mm</span>
+                    <span id="x_current" class="current-position">当前位置：0.000 mm</span>
+                </div>
+                <input type="range" id="x_pos" min="0" max="25" step="0.01" value="0">
+                
+                <!-- X轴步进控制 -->
+                <div class="xy-step-control">
+                    <button class="step-btn" onclick="moveXLeft()">
+                        <i class="fas fa-chevron-left"></i> 左
+                    </button>
+                    <div class="step-input-wrapper">
+                        <input type="number" id="xStepSize" class="step-input" value="50" min="50" step="1" placeholder="步长">
+                        <span class="step-unit">μm</span>
+                    </div>
+                    <button class="step-btn" onclick="moveXRight()">
+                        <i class="fas fa-chevron-right"></i> 右
+                    </button>
+                </div>
+
+                <!-- Y方向 -->
+                <div class="position-row">
+                    <span id="y_value" class="slider-value">Y目标位置：0.00 mm</span>
+                    <span id="y_current" class="current-position">当前位置：0.000 mm</span>
+                </div>
+                <input type="range" id="y_pos" min="0" max="25" step="0.01" value="0">
+                
+                <!-- Y轴步进控制 -->
+                <div class="xy-step-control">
+                    <button class="step-btn" onclick="moveYDown()">
+                        <i class="fas fa-chevron-down"></i> 下
+                    </button>
+                    <div class="step-input-wrapper">
+                        <input type="number" id="yStepSize" class="step-input" value="50" min="50" step="1" placeholder="步长">
+                        <span class="step-unit">μm</span>
+                    </div>
+                    <button class="step-btn" onclick="moveYUp()">
+                        <i class="fas fa-chevron-up"></i> 上
+                    </button>
+                </div>
+
+                <!-- Z方向 -->
+                <div class="position-row">
+                    <span id="z_value" class="slider-value">Z目标位置：0.000 mm</span>
+                    <span id="z_current" class="current-position">当前位置：0.000 mm</span>
+                </div>
+                <input type="range" id="z_pos" min="0" max="10" step="0.001" value="0">
+                
+                <!-- Z轴步进控制 -->
+                <div class="xy-step-control">
+                    <button class="step-btn" onclick="moveZBackward()">
+                        <i class="fas fa-chevron-left"></i> 后退
+                    </button>
+                    <div class="step-input-wrapper">
+                        <input type="number" id="zStepSize" class="step-input" value="2" min="1" step="1" placeholder="步长">
+                        <span class="step-unit">μm</span>
+                    </div>
+                    <button class="step-btn" onclick="moveZForward()">
+                        <i class="fas fa-chevron-right"></i> 前进
+                    </button>
+                </div>
+            </div>
+            
+            <div class="button-row">
+                <div id="indicator" class="indicator indicator-full-width" title="点击停止电机运动">
+                    <i class="fas fa-stop-circle" id="indicator-icon"></i>
+                    <span id="indicator-text">静止</span>
+                </div>
             </div>
             
             <div class="button-row">
@@ -95,80 +251,6 @@
                 <button id="stitch_images" class="btn" onclick="stitch_images()">
                     <i class="fas fa-puzzle-piece"></i><br>400%拼接
                 </button>
-            </div>
-            
-            <div class="button-row">
-                <div id="indicator" class="indicator indicator-full-width" title="点击停止电机运动">
-                    <i class="fas fa-stop-circle" id="indicator-icon"></i>
-                    <span id="indicator-text">静止</span>
-                </div>
-            </div>
-            
-            <div class="control-section">
-                <h4><i class="fas fa-arrows-alt"></i> 位置控制</h4>
-                
-                <!-- X方向 -->
-                <div class="position-row">
-                    <span id="x_value" class="slider-value">X目标位置：0.00 mm</span>
-                    <span id="x_current" class="current-position">当前位置：0.000 mm</span>
-                </div>
-                <input type="range" id="x_pos" min="0" max="18" step="0.01" value="0">
-                
-                <!-- X轴步进控制 -->
-                <div class="xy-step-control">
-                    <button class="step-btn" onclick="moveXLeft()">
-                        <i class="fas fa-chevron-left"></i> 左
-                    </button>
-                    <div class="step-input-wrapper">
-                        <input type="number" id="xStepSize" class="step-input" value="50" min="50" step="1" placeholder="步长">
-                        <span class="step-unit">μm</span>
-                    </div>
-                    <button class="step-btn" onclick="moveXRight()">
-                        <i class="fas fa-chevron-right"></i> 右
-                    </button>
-                </div>
-
-                <!-- Y方向 -->
-                <div class="position-row">
-                    <span id="y_value" class="slider-value">Y目标位置：0.00 mm</span>
-                    <span id="y_current" class="current-position">当前位置：0.000 mm</span>
-                </div>
-                <input type="range" id="y_pos" min="0" max="18" step="0.01" value="0">
-                
-                <!-- Y轴步进控制 -->
-                <div class="xy-step-control">
-                    <button class="step-btn" onclick="moveYDown()">
-                        <i class="fas fa-chevron-down"></i> 下
-                    </button>
-                    <div class="step-input-wrapper">
-                        <input type="number" id="yStepSize" class="step-input" value="50" min="50" step="1" placeholder="步长">
-                        <span class="step-unit">μm</span>
-                    </div>
-                    <button class="step-btn" onclick="moveYUp()">
-                        <i class="fas fa-chevron-up"></i> 上
-                    </button>
-                </div>
-
-                <!-- Z方向 -->
-                <div class="position-row">
-                    <span id="z_value" class="slider-value">Z目标位置：0.000 mm</span>
-                    <span id="z_current" class="current-position">当前位置：0.000 mm</span>
-                </div>
-                <input type="range" id="z_pos" min="0" max="10" step="0.001" value="0">
-                
-                <!-- Z轴步进控制 -->
-                <div class="xy-step-control">
-                    <button class="step-btn" onclick="moveZBackward()">
-                        <i class="fas fa-chevron-left"></i> 后退
-                    </button>
-                    <div class="step-input-wrapper">
-                        <input type="number" id="zStepSize" class="step-input" value="2" min="1" step="1" placeholder="步长">
-                        <span class="step-unit">μm</span>
-                    </div>
-                    <button class="step-btn" onclick="moveZForward()">
-                        <i class="fas fa-chevron-right"></i> 前进
-                    </button>
-                </div>
             </div>
 
             <div class="control-section">
@@ -338,6 +420,41 @@
                     </div>
                 </div>
                 <div id="connectStatus" class="connect-status"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- VLM API Key配置模态框 -->
+    <div id="vllmApiKeyModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-key"></i> VLM API Key 配置</h3>
+                <span class="close" onclick="closeVllmApiKeyModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div class="connect-form">
+                    <div class="form-group">
+                        <label for="vllmApiKey">API Key：</label>
+                        <div class="password-input">
+                            <input type="password" id="vllmApiKey" placeholder="请输入VLM API Key">
+                            <button type="button" class="password-toggle" onclick="toggleApiKeyVisibility()">
+                                <i class="fas fa-eye"></i>
+                            </button>
+                        </div>
+                        <small style="color: #b0b0b0; margin-top: 5px; display: block;">
+                            用于访问云端VLM大模型的API密钥
+                        </small>
+                    </div>
+                    <div class="form-actions">
+                        <button id="saveVllmApiKeyBtn" class="btn-primary" onclick="saveVllmApiKey()">
+                            <i class="fas fa-save"></i> 保存
+                        </button>
+                        <button class="btn-secondary" onclick="closeVllmApiKeyModal()">
+                            取消
+                        </button>
+                    </div>
+                </div>
+                <div id="vllmApiKeyStatus" class="connect-status"></div>
             </div>
         </div>
     </div>

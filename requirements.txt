@@ -23,7 +23,6 @@ adafruit-blinka==8.66.0
 Adafruit-ADS1x15==1.0.2
 Adafruit-GPIO==1.0.3
 Adafruit-PureIO==1.1.11
-rpi-hardware-pwm==0.3.0
 
 # 数据分析和科学计算
 scipy==1.10.1
@@ -51,5 +50,9 @@ itsdangerous==2.1.2
 Jinja2==3.1.2
 MarkupSafe==2.1.2
 
+# VLM大模型支持
+openai>=1.0.0
+python-dotenv>=1.0.0
+
 # 注释：Python内置模块，无需安装
-# json, multiprocessing, threading, time, os, io, base64, subprocess, tempfile, re 
+# json, multiprocessing, threading, time, os, io, base64, subprocess, tempfile, re, pathlib 

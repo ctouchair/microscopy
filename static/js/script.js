@@ -13,6 +13,10 @@ socket.on('connect', function() {
     addLogMessage('已连接到服务器', 'success');
     // Request initial settings
     socket.emit('get_settings');
+    // 延迟一下确保页面元素已加载后获取系统提示词
+    setTimeout(function() {
+        socket.emit('get_system_prompt');
+    }, 500);
 });
 
 socket.on('disconnect', function() {
@@ -1389,11 +1393,135 @@ socket.on('wifi_connect_result', function(data) {
     }
 });
 
+// 系统提示词相关函数
+window.saveSystemPrompt = function() {
+    const textarea = document.getElementById('systemPromptTextarea');
+    const modelNameInput = document.getElementById('modelNameInput');
+    const modelUrlInput = document.getElementById('modelUrlInput');
+    const saveBtn = document.getElementById('saveSystemPromptBtn');
+    
+    if (!textarea) return;
+    
+    const prompt = textarea.value.trim();
+    const modelName = modelNameInput ? modelNameInput.value.trim() : 'qwen3-vl-plus';
+    const modelUrl = modelUrlInput ? modelUrlInput.value.trim() : 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+    
+    if (!prompt) {
+        addLogMessage('系统提示词不能为空', 'warning');
+        return;
+    }
+    
+    if (!modelName) {
+        addLogMessage('模型名称不能为空', 'warning');
+        return;
+    }
+    
+    if (!modelUrl) {
+        addLogMessage('API URL不能为空', 'warning');
+        return;
+    }
+    
+    // 禁用保存按钮
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 保存中...';
+    }
+    
+    // 发送到服务器
+    socket.emit('save_system_prompt', { 
+        prompt: prompt,
+        model_name: modelName,
+        model_url: modelUrl
+    });
+};
+
+window.resetSystemPrompt = function() {
+    if (confirm('确定要重置为默认系统提示词、模型名称和URL吗？')) {
+        const defaultPrompt = '你是显微镜图像分析助手，请根据用户的问题和上传的图片，给出详细的分析和回答。';
+        const defaultModelName = 'qwen3-vl-plus';
+        const defaultModelUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+        const textarea = document.getElementById('systemPromptTextarea');
+        const modelNameInput = document.getElementById('modelNameInput');
+        const modelUrlInput = document.getElementById('modelUrlInput');
+        
+        if (textarea) {
+            textarea.value = defaultPrompt;
+        }
+        if (modelNameInput) {
+            modelNameInput.value = defaultModelName;
+        }
+        if (modelUrlInput) {
+            modelUrlInput.value = defaultModelUrl;
+        }
+        addLogMessage('已重置为默认提示词、模型名称和URL', 'info');
+    }
+};
+
+window.toggleSystemPrompt = function() {
+    const promptContent = document.getElementById('systemPromptContent');
+    const toggleBtn = document.getElementById('toggleSystemPrompt');
+    
+    if (!promptContent) return;
+    
+    const isCollapsed = promptContent.style.display === 'none';
+    
+    if (isCollapsed) {
+        promptContent.style.display = 'block';
+        if (toggleBtn) {
+            toggleBtn.innerHTML = '<i class="fas fa-chevron-up"></i> 收起';
+        }
+    } else {
+        promptContent.style.display = 'none';
+        if (toggleBtn) {
+            toggleBtn.innerHTML = '<i class="fas fa-chevron-down"></i> 展开';
+        }
+    }
+};
+
+// 监听系统提示词相关事件
+socket.on('system_prompt_response', function(data) {
+    const textarea = document.getElementById('systemPromptTextarea');
+    const modelNameInput = document.getElementById('modelNameInput');
+    const modelUrlInput = document.getElementById('modelUrlInput');
+    
+    if (data.success) {
+        if (textarea) {
+            textarea.value = data.prompt || '';
+        }
+        if (modelNameInput) {
+            modelNameInput.value = data.model_name || 'qwen3-vl-plus';
+        }
+        if (modelUrlInput) {
+            modelUrlInput.value = data.model_url || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+        }
+    } else {
+        addLogMessage(`获取系统提示词失败: ${data.error}`, 'error');
+    }
+});
+
+socket.on('system_prompt_saved', function(data) {
+    const saveBtn = document.getElementById('saveSystemPromptBtn');
+    
+    // 恢复保存按钮
+    if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="fas fa-save"></i> 保存';
+    }
+    
+    if (data.success) {
+        addLogMessage(data.message || '系统提示词已保存', 'success');
+    } else {
+        addLogMessage(`保存系统提示词失败: ${data.error}`, 'error');
+    }
+});
+
+
 // 点击模态框外部关闭
 window.onclick = function(event) {
     const wifiModal = document.getElementById('wifiModal');
     const connectModal = document.getElementById('wifiConnectModal');
     const updateModal = document.getElementById('updateModal');
+    const vllmApiKeyModal = document.getElementById('vllmApiKeyModal');
     
     if (event.target === wifiModal) {
         closeWifiModal();
@@ -1403,6 +1531,9 @@ window.onclick = function(event) {
     }
     if (event.target === updateModal) {
         closeUpdateModal();
+    }
+    if (event.target === vllmApiKeyModal) {
+        closeVllmApiKeyModal();
     }
 }
 
@@ -1740,3 +1871,487 @@ function initCam1ModeSelector() {
 document.addEventListener('DOMContentLoaded', function() {
     initCam1ModeSelector();
 });
+
+// ==================== VLM对话功能 ====================
+let currentImageBase64 = null; // 存储当前选择的图片（base64）
+let currentImageFileName = null; // 存储当前选择的图片文件名
+let vllmChatCollapsed = false; // 跟踪VLM对话窗口是否收起
+let isVllmResponding = false; // 跟踪是否正在等待VLM回复
+
+// 选择本地图片
+window.selectLocalImage = function() {
+    const fileInput = document.getElementById('vllmImageInput');
+    if (fileInput) {
+        fileInput.click();
+    }
+};
+
+// 处理图片选择
+window.handleImageSelect = function(event) {
+    const file = event.target.files[0];
+    if (!file) {
+        return;
+    }
+    
+    // 检查文件类型
+    if (!file.type.startsWith('image/')) {
+        addLogMessage('请选择图片文件', 'error');
+        return;
+    }
+    
+    // 检查文件大小（限制为20MB）
+    const maxSize = 20 * 1024 * 1024; // 20MB
+    if (file.size > maxSize) {
+        addLogMessage('图片文件过大，请选择小于20MB的图片', 'error');
+        return;
+    }
+    
+    // 读取文件并转换为base64
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        // 移除data:image/xxx;base64,前缀，只保留base64数据
+        const base64String = e.target.result;
+        const base64Data = base64String.split(',')[1] || base64String;
+        
+        currentImageBase64 = base64Data;
+        currentImageFileName = file.name;
+        
+        // 更新UI显示
+        const selectBtn = document.getElementById('selectImageBtn');
+        const imageNameSpan = document.getElementById('selectedImageName');
+        
+        if (selectBtn) {
+            selectBtn.classList.add('active');
+            selectBtn.title = '图片已选择，点击可重新选择';
+        }
+        
+        if (imageNameSpan) {
+            // 截断过长的文件名
+            const displayName = file.name.length > 20 ? file.name.substring(0, 20) + '...' : file.name;
+            const nameText = imageNameSpan.querySelector('.image-name-text');
+            if (nameText) {
+                nameText.textContent = displayName;
+                nameText.title = file.name; // 完整文件名作为提示
+            }
+            imageNameSpan.style.display = 'inline-flex';
+        }
+        
+        addLogMessage(`图片已选择: ${file.name} (${(file.size / 1024 / 1024).toFixed(2)}MB)`, 'success');
+    };
+    
+    reader.onerror = function() {
+        addLogMessage('读取图片文件失败', 'error');
+    };
+    
+    reader.readAsDataURL(file);
+};
+
+// 清除已选择的图片
+window.removeSelectedImage = function() {
+    currentImageBase64 = null;
+    currentImageFileName = null;
+    
+    const selectBtn = document.getElementById('selectImageBtn');
+    const imageNameSpan = document.getElementById('selectedImageName');
+    const fileInput = document.getElementById('vllmImageInput');
+    
+    if (selectBtn) {
+        selectBtn.classList.remove('active');
+        selectBtn.title = '选择本地图片';
+    }
+    
+    if (imageNameSpan) {
+        imageNameSpan.style.display = 'none';
+        const nameText = imageNameSpan.querySelector('.image-name-text');
+        if (nameText) {
+            nameText.textContent = '';
+            nameText.title = '';
+        }
+    }
+    
+    if (fileInput) {
+        fileInput.value = '';
+    }
+    
+    addLogMessage('已清除图片选择', 'info');
+};
+
+// 发送VLM消息
+window.sendVllmMessage = function() {
+    const input = document.getElementById('vllmChatInput');
+    const text = input ? input.value.trim() : '';
+    
+    if (!text && !currentImageBase64) {
+        addLogMessage('请输入问题', 'warning');
+        return;
+    }
+    
+    if (isVllmResponding) {
+        addLogMessage('正在等待回复，请稍候...', 'warning');
+        return;
+    }
+    
+    // 添加用户消息到对话框
+    addVllmMessage('user', text, currentImageBase64);
+    
+    // 清空输入框
+    if (input) {
+        input.value = '';
+    }
+    
+    // 禁用发送按钮
+    isVllmResponding = true;
+    const sendBtn = document.getElementById('sendVllmMessage');
+    if (sendBtn) {
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 发送中...';
+    }
+    
+    // 发送到服务器
+    socket.emit('vllm_chat', {
+        image_base64: currentImageBase64,
+        text: text
+    });
+    
+    // 发送后不清空图片，允许用户继续使用同一张图片进行多轮对话
+    // 如果需要发送后清空图片，可以取消下面的注释
+    // currentImageBase64 = null;
+    // currentImageFileName = null;
+    // const selectBtn = document.getElementById('selectImageBtn');
+    // const imageNameSpan = document.getElementById('selectedImageName');
+    // const fileInput = document.getElementById('vllmImageInput');
+    // if (selectBtn) {
+    //     selectBtn.classList.remove('active');
+    //     selectBtn.title = '选择本地图片';
+    // }
+    // if (imageNameSpan) {
+    //     imageNameSpan.style.display = 'none';
+    //     imageNameSpan.textContent = '';
+    // }
+    // if (fileInput) {
+    //     fileInput.value = '';
+    // }
+};
+
+// 处理输入框回车键
+window.handleVllmChatKeyPress = function(event) {
+    if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendVllmMessage();
+    }
+};
+
+// 添加消息到对话框
+function addVllmMessage(role, text, imageBase64 = null) {
+    const chatContent = document.getElementById('vllmChatContent');
+    if (!chatContent) return;
+    
+    // 移除欢迎消息
+    const welcomeMsg = chatContent.querySelector('.vllm-welcome-message');
+    if (welcomeMsg) {
+        welcomeMsg.remove();
+    }
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `vllm-message vllm-message-${role}`;
+    
+    if (role === 'user') {
+        messageDiv.innerHTML = `
+            <div class="vllm-message-content">
+                ${imageBase64 ? `<img src="data:image/jpeg;base64,${imageBase64}" class="vllm-message-image" alt="用户上传的图片">` : ''}
+                ${text ? `<div class="vllm-message-text">${escapeHtml(text)}</div>` : ''}
+            </div>
+        `;
+    } else {
+        // assistant消息，用于流式显示
+        messageDiv.innerHTML = `
+            <div class="vllm-message-content">
+                <div class="vllm-message-text vllm-message-streaming"></div>
+            </div>
+        `;
+    }
+    
+    chatContent.appendChild(messageDiv);
+    scrollVllmChatToBottom();
+    
+    return messageDiv;
+}
+
+// 转义HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// 滚动到底部
+function scrollVllmChatToBottom() {
+    const chatContent = document.getElementById('vllmChatContent');
+    if (chatContent) {
+        chatContent.scrollTop = chatContent.scrollHeight;
+    }
+}
+
+// VLM对话SocketIO事件监听
+socket.on('vllm_chat_start', function(data) {
+    // 创建助手消息容器
+    const chatContent = document.getElementById('vllmChatContent');
+    if (!chatContent) return;
+    
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'vllm-message vllm-message-assistant';
+    messageDiv.id = 'vllm-current-response';
+    messageDiv.innerHTML = `
+        <div class="vllm-message-content">
+            <div class="vllm-message-text vllm-message-streaming"></div>
+        </div>
+    `;
+    
+    chatContent.appendChild(messageDiv);
+    scrollVllmChatToBottom();
+});
+
+socket.on('vllm_chat_chunk', function(data) {
+    const messageDiv = document.getElementById('vllm-current-response');
+    if (!messageDiv) return;
+    
+    const textDiv = messageDiv.querySelector('.vllm-message-text');
+    if (textDiv) {
+        if (data.is_first) {
+            textDiv.textContent = data.content;
+        } else {
+            textDiv.textContent += data.content;
+        }
+        scrollVllmChatToBottom();
+    }
+});
+
+socket.on('vllm_chat_thinking', function(data) {
+    // 思考过程（可选显示）
+    // 可以在这里添加思考过程的显示逻辑
+});
+
+socket.on('vllm_chat_done', function(data) {
+    // 移除当前响应ID
+    const messageDiv = document.getElementById('vllm-current-response');
+    if (messageDiv) {
+        messageDiv.removeAttribute('id');
+        const textDiv = messageDiv.querySelector('.vllm-message-text');
+        if (textDiv) {
+            textDiv.classList.remove('vllm-message-streaming');
+        }
+    }
+    
+    // 恢复发送按钮
+    isVllmResponding = false;
+    const sendBtn = document.getElementById('sendVllmMessage');
+    if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> 发送';
+    }
+    
+    scrollVllmChatToBottom();
+});
+
+socket.on('vllm_chat_error', function(data) {
+    addLogMessage(`VLM对话错误: ${data.error}`, 'error');
+    
+    // 移除当前响应
+    const messageDiv = document.getElementById('vllm-current-response');
+    if (messageDiv) {
+        messageDiv.remove();
+    }
+    
+    // 恢复发送按钮
+    isVllmResponding = false;
+    const sendBtn = document.getElementById('sendVllmMessage');
+    if (sendBtn) {
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = '<i class="fas fa-paper-plane"></i> 发送';
+    }
+});
+
+// 清空VLM对话历史
+window.clearVllmHistory = function() {
+    if (confirm('确定要清空对话历史吗？')) {
+        socket.emit('clear_vllm_history');
+        const chatContent = document.getElementById('vllmChatContent');
+        if (chatContent) {
+            chatContent.innerHTML = `
+                <div class="vllm-welcome-message">
+                    <i class="fas fa-robot"></i> 你好！我是VLM智能助手，可以直接输入问题进行对话，也可以上传图片进行分析。
+                </div>
+            `;
+        }
+        currentImageBase64 = null;
+        currentImageFileName = null;
+        const selectBtn = document.getElementById('selectImageBtn');
+        const imageNameSpan = document.getElementById('selectedImageName');
+        const fileInput = document.getElementById('vllmImageInput');
+        
+        if (selectBtn) {
+            selectBtn.classList.remove('active');
+            selectBtn.title = '选择本地图片';
+        }
+        if (imageNameSpan) {
+            imageNameSpan.style.display = 'none';
+            const nameText = imageNameSpan.querySelector('.image-name-text');
+            if (nameText) {
+                nameText.textContent = '';
+                nameText.title = '';
+            }
+        }
+        if (fileInput) {
+            fileInput.value = '';
+        }
+        addLogMessage('对话历史已清空', 'info');
+    }
+};
+
+socket.on('vllm_history_cleared', function(data) {
+    if (data.success) {
+        addLogMessage('对话历史已清空', 'success');
+    }
+});
+
+// 切换VLM对话窗口显示/隐藏
+window.toggleVllmChat = function() {
+    const chatContent = document.getElementById('vllmChatContent');
+    const inputContainer = document.querySelector('.vllm-chat-input-container');
+    const toggleBtn = document.getElementById('toggleVllmChat');
+    
+    if (!chatContent || !inputContainer) return;
+    
+    vllmChatCollapsed = !vllmChatCollapsed;
+    
+    if (vllmChatCollapsed) {
+        chatContent.style.display = 'none';
+        inputContainer.style.display = 'none';
+        if (toggleBtn) {
+            toggleBtn.innerHTML = '<i class="fas fa-chevron-down"></i> 展开';
+        }
+    } else {
+        chatContent.style.display = 'block';
+        inputContainer.style.display = 'block';
+        if (toggleBtn) {
+            toggleBtn.innerHTML = '<i class="fas fa-chevron-up"></i> 收起';
+        }
+        scrollVllmChatToBottom();
+    }
+};
+
+// VLM API Key配置相关函数
+window.openVllmApiKeyModal = function() {
+    const modal = document.getElementById('vllmApiKeyModal');
+    if (modal) {
+        modal.style.display = 'block';
+        // 获取当前API Key状态
+        socket.emit('get_vllm_api_key');
+    }
+};
+
+window.closeVllmApiKeyModal = function() {
+    const modal = document.getElementById('vllmApiKeyModal');
+    if (modal) {
+        modal.style.display = 'none';
+        // 清空输入框
+        const apiKeyInput = document.getElementById('vllmApiKey');
+        if (apiKeyInput) {
+            apiKeyInput.value = '';
+        }
+        // 清空状态显示
+        const statusDiv = document.getElementById('vllmApiKeyStatus');
+        if (statusDiv) {
+            statusDiv.style.display = 'none';
+            statusDiv.className = 'connect-status';
+            statusDiv.textContent = '';
+        }
+    }
+};
+
+window.toggleApiKeyVisibility = function() {
+    const apiKeyInput = document.getElementById('vllmApiKey');
+    const toggleBtn = event.target.closest('.password-toggle');
+    if (!apiKeyInput || !toggleBtn) return;
+    
+    if (apiKeyInput.type === 'password') {
+        apiKeyInput.type = 'text';
+        toggleBtn.innerHTML = '<i class="fas fa-eye-slash"></i>';
+    } else {
+        apiKeyInput.type = 'password';
+        toggleBtn.innerHTML = '<i class="fas fa-eye"></i>';
+    }
+};
+
+window.saveVllmApiKey = function() {
+    const apiKeyInput = document.getElementById('vllmApiKey');
+    const saveBtn = document.getElementById('saveVllmApiKeyBtn');
+    const statusDiv = document.getElementById('vllmApiKeyStatus');
+    
+    if (!apiKeyInput) return;
+    
+    const apiKey = apiKeyInput.value.trim();
+    if (!apiKey) {
+        if (statusDiv) {
+            statusDiv.style.display = 'block';
+            statusDiv.className = 'connect-status error';
+            statusDiv.textContent = '请输入API Key';
+        }
+        return;
+    }
+    
+    // 禁用保存按钮
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 保存中...';
+    }
+    
+    // 发送到服务器
+    socket.emit('save_vllm_api_key', { api_key: apiKey });
+};
+
+// 监听API Key相关事件
+socket.on('vllm_api_key_status', function(data) {
+    const statusDiv = document.getElementById('vllmApiKeyStatus');
+    if (statusDiv) {
+        statusDiv.style.display = 'block';
+        if (data.has_key) {
+            statusDiv.className = 'connect-status success';
+            statusDiv.textContent = data.message;
+        } else {
+            statusDiv.className = 'connect-status info';
+            statusDiv.textContent = data.message;
+        }
+    }
+});
+
+socket.on('vllm_api_key_saved', function(data) {
+    const saveBtn = document.getElementById('saveVllmApiKeyBtn');
+    const statusDiv = document.getElementById('vllmApiKeyStatus');
+    
+    // 恢复保存按钮
+    if (saveBtn) {
+        saveBtn.disabled = false;
+        saveBtn.innerHTML = '<i class="fas fa-save"></i> 保存';
+    }
+    
+    // 显示状态
+    if (statusDiv) {
+        statusDiv.style.display = 'block';
+        if (data.success) {
+            statusDiv.className = 'connect-status success';
+            statusDiv.textContent = data.message || 'API Key已保存';
+        } else {
+            statusDiv.className = 'connect-status error';
+            statusDiv.textContent = data.error || '保存失败';
+        }
+    }
+    
+    if (data.success) {
+        // 3秒后自动关闭模态框
+        setTimeout(function() {
+            closeVllmApiKeyModal();
+        }, 3000);
+    }
+});
+

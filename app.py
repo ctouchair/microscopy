@@ -1942,6 +1942,22 @@ def handle_system_update(data):
             except Exception as version_error:
                 send_log_message(f'保存版本信息失败: {str(version_error)}', 'warning')
             
+            # 检查并安装依赖包（在重启服务前）
+            send_log_message('正在检查并安装依赖包...', 'info')
+            emit('update_status', {'status': 'installing', 'message': '正在检查并安装依赖包...'})
+            
+            try:
+                # 调用依赖检查和安装函数
+                deps_result = check_and_install_dependencies_for_update(microscopy_path)
+                if deps_result:
+                    send_log_message('依赖包检查和安装完成', 'success')
+                else:
+                    send_log_message('依赖包安装过程中出现警告，但将继续重启服务', 'warning')
+            except Exception as deps_error:
+                send_log_message(f'依赖包检查失败: {str(deps_error)}，将继续重启服务', 'warning')
+                import traceback
+                traceback.print_exc()
+            
             # 发送重启通知给前端
             send_log_message('系统更新完成，正在重启服务...', 'info')
             emit('update_status', {'status': 'restarting', 'message': '正在重启服务，请稍候...'})
@@ -2676,6 +2692,122 @@ def check_and_install_dependencies():
         
     except Exception as e:
         print(f"⚠️  依赖检查过程出错: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def check_and_install_dependencies_for_update(microscopy_path):
+    """在系统更新时检查并安装requirements.txt中的依赖包（支持日志消息发送）"""
+    try:
+        import subprocess
+        import sys
+        import re
+        
+        # requirements.txt文件路径
+        requirements_file = os.path.join(microscopy_path, 'requirements.txt')
+        
+        if not os.path.exists(requirements_file):
+            send_log_message('⚠️  requirements.txt文件不存在，跳过依赖检查', 'warning')
+            return True
+        
+        send_log_message('检查Python依赖包...', 'info')
+        
+        # 读取requirements.txt
+        required_packages = []
+        with open(requirements_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.strip()
+                # 跳过注释和空行
+                if not line or line.startswith('#'):
+                    continue
+                # 解析包名（处理版本号）
+                # 例如: Flask==2.2.2 或 openai>=1.0.0
+                match = re.match(r'^([a-zA-Z0-9_-]+[a-zA-Z0-9_.-]*)(.*)$', line)
+                if match:
+                    package_name = match.group(1)
+                    required_packages.append((package_name, line))
+        
+        if not required_packages:
+            send_log_message('✅ requirements.txt中没有需要安装的包', 'success')
+            return True
+        
+        # 检查已安装的包
+        try:
+            result = subprocess.run([sys.executable, '-m', 'pip', 'list', '--format=freeze'], 
+                                  capture_output=True, text=True, timeout=30)
+            installed_packages = {}
+            if result.returncode == 0:
+                for line in result.stdout.split('\n'):
+                    if '==' in line:
+                        parts = line.split('==')
+                        if len(parts) == 2:
+                            installed_packages[parts[0].lower()] = parts[1]
+        except Exception as e:
+            send_log_message(f'⚠️  检查已安装包时出错: {e}', 'warning')
+            installed_packages = {}
+        
+        # 检查缺失的包
+        missing_packages = []
+        for package_name, full_spec in required_packages:
+            # 标准化包名（转换为小写，处理包名差异）
+            normalized_name = package_name.lower().replace('_', '-').replace('.', '-')
+            found = False
+            
+            # 检查各种可能的包名格式
+            for installed_name in installed_packages.keys():
+                if (installed_name == normalized_name or 
+                    installed_name == package_name.lower() or
+                    installed_name.replace('-', '_') == package_name.lower() or
+                    installed_name.replace('-', '_') == normalized_name):
+                    found = True
+                    break
+            
+            if not found:
+                missing_packages.append(full_spec)
+        
+        if not missing_packages:
+            send_log_message('✅ 所有依赖包已安装', 'success')
+            return True
+        
+        # 安装缺失的包
+        send_log_message(f'发现 {len(missing_packages)} 个缺失的依赖包，开始自动安装...', 'info')
+        success_count = 0
+        fail_count = 0
+        
+        for i, package_spec in enumerate(missing_packages, 1):
+            send_log_message(f'[{i}/{len(missing_packages)}] 正在安装: {package_spec}', 'info')
+            try:
+                result = subprocess.run(
+                    [sys.executable, '-m', 'pip', 'install', package_spec],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5分钟超时
+                )
+                if result.returncode == 0:
+                    send_log_message(f'✅ {package_spec} 安装成功', 'success')
+                    success_count += 1
+                else:
+                    error_msg = result.stderr.strip() if result.stderr else result.stdout.strip()
+                    send_log_message(f'⚠️  {package_spec} 安装失败: {error_msg[:100]}', 'warning')
+                    fail_count += 1
+                    # 继续安装其他包，不中断
+            except subprocess.TimeoutExpired:
+                send_log_message(f'⚠️  {package_spec} 安装超时', 'warning')
+                fail_count += 1
+            except Exception as e:
+                send_log_message(f'⚠️  {package_spec} 安装出错: {str(e)[:100]}', 'warning')
+                fail_count += 1
+        
+        if fail_count == 0:
+            send_log_message(f'✅ 依赖包检查和安装完成（成功安装 {success_count} 个包）', 'success')
+        else:
+            send_log_message(f'⚠️  依赖包安装完成（成功 {success_count} 个，失败 {fail_count} 个）', 'warning')
+        
+        return True
+        
+    except Exception as e:
+        send_log_message(f'⚠️  依赖检查过程出错: {str(e)}', 'error')
         import traceback
         traceback.print_exc()
         return False

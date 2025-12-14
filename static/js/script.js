@@ -1637,6 +1637,7 @@ function showUpdateStatus(status, message) {
         'started': 10,
         'downloading': 30,
         'updating': 60,
+        'installing': 75,  // 依赖包安装状态
         'restarting': 90,
         'completed': 100
     };

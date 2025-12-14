@@ -24,8 +24,6 @@ Adafruit-ADS1x15==1.0.2
 Adafruit-GPIO==1.0.3
 Adafruit-PureIO==1.1.11
 
-# 数据分析和科学计算
-scipy==1.10.1
 
 # 进度条显示
 tqdm==4.64.1

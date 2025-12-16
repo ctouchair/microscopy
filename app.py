@@ -1288,93 +1288,100 @@ def focus_init():
     motor0.status = False
     time.sleep(0.01)
 
+def determine_initial_direction():
+    """
+    阶段0：智能判断搜索方向
+    返回：正确的搜索步长（正数或负数）
+    """
+    _ = queues_dict['frame_len'].get()
+    test_sharpness1  = queues_dict['frame_len'].get()
+    motor0.status = True
+    motor0.move(200)
+    _ = queues_dict['frame_len'].get()
+    test_sharpness2  = queues_dict['frame_len'].get()
+    # print(f"test_sharpness1: {test_sharpness1}, test_sharpness2: {test_sharpness2}")
+    if test_sharpness1 >= test_sharpness2:
+        return -100
+    else:
+        motor0.status = True
+        motor0.move(-200)
+        return 100
 
 @socketio.on('fast_focus')
 def handle_fast_focus():
-    try:
-        send_log_message('开始快速对焦...', 'info')
-        focus_init()
-        motor0.focus = True  # 开始对焦， 同步开始记录最优值
-        # 先扫描400步，看方向
-        motor0.status = True
-        _ = queues_dict['frame_len'].get()
-        test_sharpness1  = queues_dict['frame_len'].get()
-        motor0.move(200)
-        _ = queues_dict['frame_len'].get()
-        test_sharpness2  = queues_dict['frame_len'].get()
-        if test_sharpness1 >= test_sharpness2:
-            # 在当前位置的往小了走
-            z_max, z_min = motor0.z_pos+100, motor0.z_pos-3000  #搜索范围2 mm
-            # 直接平扫
-            zdelta_step = z_max - motor0.z_pos
-            motor0.status = True
-            motor0.move(zdelta_step)
-            zdelta_step = z_min - motor0.z_pos
-            motor0.status = True
-            motor0.move(zdelta_step) # 此时应该能覆盖最佳焦点，扫描结束
-            time.sleep(0.01)
-            step, iterations, phi, tolerance = 300, 0, 0.618, 1
-            z_max, z_min = motor0.z_pos, motor0.z_pos+step
-            while motor0.focus_get and iterations < 20 and z_max-z_min < tolerance:
-                z1 = int(z_max - (z_max - z_min)*phi)
-                z2 = int(z_min + (z_max - z_min)*phi)
-                zdelta_step = z2 - motor0.z_pos
-                motor0.status = True
-                motor0.move(zdelta_step)
-                _ = queues_dict['frame_len'].get()
-                sharpness2  = queues_dict['frame_len'].get(block=True)
-                if motor0.focus_get == True:
-                    zdelta_step = z1 - motor0.z_pos
-                    motor0.status = True
-                    motor0.move(zdelta_step)
-                    _ = queues_dict['frame_len'].get()
-                    sharpness1  = queues_dict['frame_len'].get(block=True)
-                    # 根据清晰度动态调整步长和搜索范围
-                    if sharpness1 > sharpness2: #更新右端点
-                        z_max = z2
-                    else: #更新左端点
-                        z_min = z1
-                    iterations += 1
-                # print(z2, sharpness2)
+    send_log_message('开始快速对焦...', 'info')
+    focus_init()
 
-        else: # 在当前位置的往大了走
-            z_max, z_min = motor0.z_pos+3000, motor0.z_pos-500  #搜索范围2 mm
-            # 直接平扫
-            zdelta_step = z_min - motor0.z_pos
-            motor0.status = True
-            motor0.move(zdelta_step)
-            zdelta_step = z_max - motor0.z_pos
-            motor0.status = True
-            motor0.move(zdelta_step) # 此时应该能覆盖最佳焦点，扫描结束
-            time.sleep(0.01)
-            step, iterations, phi, tolerance = -300, 0, 0.618, 1
-            z_max, z_min = motor0.z_pos, motor0.z_pos+step
-            while motor0.focus_get and iterations < 20 and z_max-z_min < tolerance:
-                z1 = int(z_max - (z_max - z_min)*phi)
-                z2 = int(z_min + (z_max - z_min)*phi)
-                zdelta_step = z2 - motor0.z_pos
-                motor0.status = True
-                motor0.move(zdelta_step)
-                _ = queues_dict['frame_len'].get()
-                sharpness2  = queues_dict['frame_len'].get(block=True)
-                zdelta_step = z1 - motor0.z_pos
-                if motor0.focus_get == True:
-                    motor0.status = True
-                    motor0.move(zdelta_step)
-                    _ = queues_dict['frame_len'].get()
-                    sharpness1  = queues_dict['frame_len'].get(block=True)
-                    # 根据清晰度动态调整步长和搜索范围
-                    if sharpness1 > sharpness2: #更新右端点
-                        z_max = z2
-                    else: #更新左端点
-                        z_min = z1
-                    iterations += 1
-                # print(z2, sharpness2)
-        motor0.focus, motor0.focus_get = False, False  # 对焦结束
-        send_log_message(f'对焦完成 - 位置: {motor0.z_pos/motor0.z_steps_per_mm:.3f} mm', 'success')
-        emit('focus_complete', {'status': 'success', 'position': motor0.z_pos/motor0.z_steps_per_mm})
-    except Exception as e:
-        emit('focus_complete', {'status': 'error', 'message': str(e)})
+    # 参数配置
+    STEP_COARSE = determine_initial_direction()   # 粗测步长
+    STEP_FINE = int(10*np.sign(STEP_COARSE))      # 精测步长
+    BACKLASH_MARGIN = int(50*np.sign(STEP_COARSE)) # 大于最大回程差的安全距离
+
+    max_focus_val = 0
+    peak_position_coarse = 0
+
+    # --- 阶段 1: 粗测 (Coarse Search) ---
+    while True:
+        motor0.status = True
+        motor0.move(STEP_COARSE) # 移动
+        _ = queues_dict['frame_len'].get()
+        val  = queues_dict['frame_len'].get()
+        # print(f"val: {val}, motor0.z_pos: {motor0.z_pos}")
+        if val > max_focus_val:
+            max_focus_val = val
+            peak_position_coarse = motor0.z_pos
+            consecutive_drop = 0
+        elif val < max_focus_val * 0.9:
+            consecutive_drop += 1
+        if consecutive_drop >=2 and val < max_focus_val * 0.9: # 下降到峰值的90%（阈值防抖）
+            # 确认已过峰值
+            break
+            
+    # --- 阶段 2: 回退与消隙 (Backlash Elimination) ---
+    # 我们需要回到粗测峰值的前面一点，开始精测
+    scan_start_pos = peak_position_coarse - (STEP_COARSE * 2)
+    
+    # 关键：先退到比目标更远的地方
+    target_reverse_pos = scan_start_pos - BACKLASH_MARGIN
+    motor0.status = True
+    motor0.move_to_target(target_reverse_pos) 
+    
+    # 再正向走到精测起点（此时齿轮已咬合）
+    motor0.status = True
+    motor0.move_to_target(scan_start_pos)
+    
+    # --- 阶段 3: 精测 (Fine Search) ---
+    fine_scores = {}
+    scan_end = peak_position_coarse + STEP_COARSE * 2
+    max_focus_val = 0
+    while (motor0.z_pos - scan_end)*STEP_FINE < 0:
+        motor0.status = True
+        motor0.move(STEP_FINE)
+        _ = queues_dict['frame_len'].get()
+        val = queues_dict['frame_len'].get()
+        if val > max_focus_val:
+            max_focus_val = val
+            consecutive_drop = 0
+        else:
+            consecutive_drop += 1
+        fine_scores[motor0.z_pos] = val
+        if consecutive_drop >=2 and val < max_focus_val * 0.9: # 下降到峰值的90%（阈值防抖）
+            # 确认已过峰值
+            break
+
+    best_pos = max(fine_scores, key=fine_scores.get)
+    print(f"best_pos: {best_pos}, motor0.z_pos: {motor0.z_pos},{BACKLASH_MARGIN}")
+    # 同样，不能直接退回去，必须使用“过量回退法”
+    distance_to_best = best_pos - motor0.z_pos-BACKLASH_MARGIN
+    # 1. 过量后退
+    motor0.status = True
+    motor0.move(distance_to_best)
+    # print(f"motor0.z_pos: {motor0.z_pos}")
+    # _ = queues_dict['frame_len'].get()
+    # val = queues_dict['frame_len'].get()
+    # print(f"val: {val}")
+    motor0.focus, motor0.focus_get = False, False  # 对焦结束
+    send_log_message('对焦完成', 'success')
 
 
 @socketio.on('set_led_0')

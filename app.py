@@ -485,8 +485,6 @@ def record_video_cam1():
     send_log_message('辅助摄像头录制已停止', 'info')
 
 
-
-
 def arctan_func(x, A, B, C, D):
     return A * np.arctan(B*(x-C)) + D
 
@@ -779,8 +777,8 @@ def handle_stitch_images():
         # 计算移动步长（根据图像分辨率和视野计算）
         # 假设图像视野为0.4mm x 0.3mm，需要50%重叠区域
         # 每张图片移动0.2mm，确保有足够重叠
-        step_x_size = int(motor0.xy_steps_per_mm * 0.28*mag_scale)  # 0.32mm步长，确保30%重叠
-        step_y_size = int(motor0.xy_steps_per_mm * 0.21*mag_scale)  # 0.24mm步长，确保30%重叠
+        step_x_size = int(motor0.xy_steps_per_mm * 0.32*mag_scale)  # 0.32mm步长，确保30%重叠
+        step_y_size = int(motor0.xy_steps_per_mm * 0.24*mag_scale)  # 0.24mm步长，确保30%重叠
         # 拍摄3x3网格的图片，从左上角开始
         # 贪吃蛇形状运动：左上→右上→右中→右下→中下→中中→中上→左中→左上
         # 每张图片移动步长，确保有足够重叠区域进行拼接
@@ -811,15 +809,17 @@ def handle_stitch_images():
                 motor0.move(dy)
                 time.sleep(0.1)  # 等待移动完成，确保稳定
             
+            fast_focus(steps=50)
+            time.sleep(0.2)
             # 拍摄图片
             rgb = cam0.capture_config()
             rgb[:,:,0] = rgb[:,:,0] * cam0.r_gain
             rgb[:,:,2] = rgb[:,:,2] * cam0.b_gain
 
             images.append(rgb)
-            
-        # 恢复预览模式
-        cam0.preview_config()
+            time.sleep(0.2)
+            # 恢复预览模式
+            cam0.preview_config()
         
         # 恢复原始位置
         motor0.direction = 'X'
@@ -839,8 +839,6 @@ def handle_stitch_images():
         if stitched_image is not None:
             stitched_image = cv2.cvtColor(stitched_image, cv2.COLOR_BGR2RGB)
             
-            # 裁剪黑边
-            # stitched_image = crop_center_expanding_rect(stitched_image)
             
             # 生成拼接后的图像文件名（不保存到本地）
             timestamp = time.strftime("%Y%m%d-%H%M%S")
@@ -947,7 +945,6 @@ def handle_focus_stack():
         })
     finally:
         cam0.preview_config()
-
 
 
 
@@ -1288,7 +1285,7 @@ def focus_init():
     motor0.status = False
     time.sleep(0.01)
 
-def determine_initial_direction():
+def determine_initial_direction(steps=200):
     """
     阶段0：智能判断搜索方向
     返回：正确的搜索步长（正数或负数）
@@ -1296,24 +1293,28 @@ def determine_initial_direction():
     _ = queues_dict['frame_len'].get()
     test_sharpness1  = queues_dict['frame_len'].get()
     motor0.status = True
-    motor0.move(200)
+    motor0.move(steps)
     _ = queues_dict['frame_len'].get()
     test_sharpness2  = queues_dict['frame_len'].get()
     # print(f"test_sharpness1: {test_sharpness1}, test_sharpness2: {test_sharpness2}")
     if test_sharpness1 >= test_sharpness2:
-        return -100
+        return -steps
     else:
         motor0.status = True
-        motor0.move(-200)
-        return 100
+        motor0.move(-steps)
+        return steps
+
 
 @socketio.on('fast_focus')
 def handle_fast_focus():
+    fast_focus(steps=200)
+
+
+def fast_focus(steps=200):
     send_log_message('开始快速对焦...', 'info')
     focus_init()
-
     # 参数配置
-    STEP_COARSE = determine_initial_direction()   # 粗测步长
+    STEP_COARSE = determine_initial_direction(steps=steps)   # 粗测步长
     STEP_FINE = int(10*np.sign(STEP_COARSE))      # 精测步长
     BACKLASH_MARGIN = int(50*np.sign(STEP_COARSE)) # 大于最大回程差的安全距离
 
@@ -1370,16 +1371,12 @@ def handle_fast_focus():
             break
 
     best_pos = max(fine_scores, key=fine_scores.get)
-    print(f"best_pos: {best_pos}, motor0.z_pos: {motor0.z_pos},{BACKLASH_MARGIN}")
+    # print(f"best_pos: {best_pos}, motor0.z_pos: {motor0.z_pos},{BACKLASH_MARGIN}")
     # 同样，不能直接退回去，必须使用“过量回退法”
     distance_to_best = best_pos - motor0.z_pos-BACKLASH_MARGIN
     # 1. 过量后退
     motor0.status = True
     motor0.move(distance_to_best)
-    # print(f"motor0.z_pos: {motor0.z_pos}")
-    # _ = queues_dict['frame_len'].get()
-    # val = queues_dict['frame_len'].get()
-    # print(f"val: {val}")
     motor0.focus, motor0.focus_get = False, False  # 对焦结束
     send_log_message('对焦完成', 'success')
 

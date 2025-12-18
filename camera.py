@@ -5,6 +5,7 @@ from picamera2 import Picamera2
 import numpy as np
 import time
 from utils import load_fused_perspective_transform
+from utils import load_transform_from_npz
 
 
 class VideoCamera(object):
@@ -18,7 +19,8 @@ class VideoCamera(object):
         self.r_gain, self.b_gain = 1, 1
         self.framerate = framerate
         self.pixel_size = 0.09 #um
-        self.cam1_params, self.cam1_output_size = load_fused_perspective_transform('/home/admin/Documents/microscopy/fused_perspective_transform_params.json')
+        self.cam1_transform_data = load_transform_from_npz('/home/admin/Documents/microscopy/cam1_transform.npz')
+        # self.cam1_params, self.cam1_output_size = load_fused_perspective_transform('/home/admin/Documents/microscopy/fused_perspective_transform_params.json')
         self.apply_perspective = False
         self.mag_scale = 40
         self.normalize_intensity = False  # 强度归一化开关
@@ -99,6 +101,34 @@ class VideoCamera(object):
             controls.FrameDurationLimits = (frame_duration, frame_duration)  # 固定为self.framerate
 
 
+    @staticmethod
+    def apply_perspective_transform(image, transform_matrix_2d, output_size=(500, 500)):
+        """
+        应用透视变换到图像
+        
+        参数:
+            image: 原始图像
+            transform_matrix_2d: 3x3 透视变换矩阵
+            output_size: 输出图像尺寸，默认为 (500, 500)
+        
+        返回:
+            transformed_image: 变换后的图像
+        """
+        # 将列表转换为 numpy 数组
+        transform_matrix = np.array(transform_matrix_2d, dtype=np.float32)
+        
+        # 应用透视变换
+        transformed_image = cv2.warpPerspective(
+            image,
+            transform_matrix,
+            output_size,
+            flags=cv2.INTER_LINEAR,
+            borderMode=cv2.BORDER_CONSTANT,
+            borderValue=(255, 255, 255)  # 白色背景
+        )
+        
+        return transformed_image
+
     def get_frame(self, awb=True, flip=False, to_bgr=False, crap=True):
         """
         用于产生视频预览和保存的图像
@@ -115,10 +145,18 @@ class VideoCamera(object):
         #TO-DO提升性能，输入为低分辨率，同时输出低分辨率
         if self.apply_perspective:
             rgb = cv2.resize(rgb, self.image_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
-            rgb = cv2.warpPerspective(rgb, self.cam1_params, self.cam1_output_size)
-            rgb = rgb[1000:, 800:2700]
-            rgb_preview = cv2.resize(rgb, self.preview_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
-            rgb = cv2.resize(rgb, self.video_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
+            transformed_image = self.apply_perspective_transform(
+                rgb,
+                self.cam1_transform_data['perspective_transform_2d'],
+                output_size=(500,500)
+            )
+            rgb_preview = cv2.resize(transformed_image, self.preview_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
+            rgb = cv2.resize(transformed_image, self.video_size, interpolation=cv2.INTER_LINEAR)  
+            # rgb = cv2.resize(rgb, self.image_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
+            # rgb = cv2.warpPerspective(rgb, self.cam1_params, self.cam1_output_size)
+            # rgb = rgb[1000:, 800:2700]
+            # rgb_preview = cv2.resize(rgb, self.preview_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
+            # rgb = cv2.resize(rgb, self.video_size, interpolation=cv2.INTER_LINEAR)  #resize， binning
             # TO-DO视频录制失败
         else:
             if rgb.shape[0] > self.preview_size[0]:  #默认是video_size采集图像

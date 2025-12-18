@@ -4,6 +4,7 @@ import numpy as np
 import json
 from focus_stack_low_power import LowPowerFocusStack
 from stitching import Stitcher
+from pathlib import Path
 
 def stitch_images(images, positions):
     """
@@ -221,3 +222,23 @@ def load_fused_perspective_transform(fused_params_json_path='fused_perspective_t
     output_size = tuple(fused_params['output_size'])
     return fused_matrix, output_size
 
+
+def load_transform_from_npz(npz_path):
+    """
+    从 NPZ 文件加载变换参数
+    
+    参数:
+        npz_path: NPZ 文件路径
+    
+    返回:
+        transform_data: 包含所有变换参数的字典
+    """
+    npz_path = Path(npz_path)
+    
+    if not npz_path.exists():
+        raise FileNotFoundError(f"变换参数文件不存在: {npz_path}")
+    
+    data = np.load(str(npz_path))
+    transform_data = {key: data[key] for key in data.keys()}
+    
+    return transform_data

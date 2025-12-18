@@ -1316,7 +1316,7 @@ def fast_focus(steps=200):
     # 参数配置
     STEP_COARSE = determine_initial_direction(steps=steps)   # 粗测步长
     STEP_FINE = int(10*np.sign(STEP_COARSE))      # 精测步长
-    BACKLASH_MARGIN = int(50*np.sign(STEP_COARSE)) # 大于最大回程差的安全距离
+    BACKLASH_MARGIN = int(40*np.sign(STEP_COARSE)) # 大于最大回程差的安全距离
 
     max_focus_val = 0
     peak_position_coarse = 0
@@ -1377,6 +1377,9 @@ def fast_focus(steps=200):
     # 1. 过量后退
     motor0.status = True
     motor0.move(distance_to_best)
+    time.sleep(0.01)
+    motor0.status = True
+    motor0.move(BACKLASH_MARGIN)
     motor0.focus, motor0.focus_get = False, False  # 对焦结束
     send_log_message('对焦完成', 'success')
 

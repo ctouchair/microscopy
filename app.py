@@ -127,7 +127,7 @@ from camera import VideoCamera
 import multiprocessing
 import cv2
 import threading
-from motor import motor
+from motor import Motor, Adc, Led
 from PIL import Image
 from flask_socketio import SocketIO, emit, send
 import json
@@ -174,10 +174,8 @@ class ConfigManager:
                 cam0.analogue_gain = settings['gain_value']
                 cam0.r_gain = settings['r_value']
                 cam0.b_gain = settings['b_value']
-                motor0.led_cycle0 = int(settings.get('led_value_0', 10))
-                motor0.set_led_power0()
-                motor0.led_cycle1 = int(settings.get('led_value_1', 10))
-                motor0.set_led_power1()
+                led_0.set_led_power(int(settings.get('led_value_0', 10)))
+                led_1.set_led_power(int(settings.get('led_value_1', 10)))
                 # 读取校准的步数值，如果不存在则使用默认值1500
                 cam0.pixel_size = settings.get('pixel_size', 0.09)
                 print(f"Loaded pixel_size: {cam0.pixel_size}")
@@ -207,12 +205,12 @@ class ConfigManager:
             settings = {
                 'exposure_value': cam0.exposure_time/1000,
                 'gain_value': cam0.analogue_gain,
-                'led_value_0': motor0.led_cycle0,
-                'led_value_1': motor0.led_cycle1,
+                'led_value_0': led_0.led_cycle,
+                'led_value_1': led_1.led_cycle,
                 'r_value': cam0.r_gain,
                 'b_value': cam0.b_gain,
-                'xy_steps_per_mm': motor0.xy_steps_per_mm,
-                'z_steps_per_mm': motor0.z_steps_per_mm,
+                'xy_steps_per_mm': motor_x.steps_per_mm,
+                'z_steps_per_mm': motor_z.steps_per_mm,
                 'magnification': cam0.mag_scale,  # 保存显微镜倍率
                 'z_level': self.z_level,  # 保存景深堆叠Z Level参数
                 'z_step_size': self.z_step_size,  # 保存Z轴步进控制步长
@@ -264,7 +262,13 @@ cam1 = VideoCamera(Picamera2(0), preview_size=imx219_dict["preview_size"], video
 cam1.apply_perspective = False
 
 
-motor0 = motor()
+#初始化对象
+motor_x = Motor("X")
+motor_y = Motor("Y")
+motor_z = Motor("Z")
+led_0 = Led(0)
+led_1 = Led(1)
+adc = Adc()
 
 # 存储照片和录像的目录
 SAVE_DIR = '/home/admin/Documents/microscopy/static'
@@ -289,33 +293,12 @@ def generate_frames():
     cam0.preview_config()
     time.sleep(0.5)
     # pbar = tqdm(total=0, dynamic_ncols=True)
-    max_sharpness, z_pos_array, sharp_array = 0, [], []
-    motor0.focus_get = False
     frame_counter = 0  # 添加帧计数器用于帧率控制
     while config.is_veiwing:
         frame, rgb = cam0.get_frame(awb=True, crap=False)  #rgb图片是用于视频写入保存，为视频分辨率
         frame_sharpness = len(frame)
         if queues_dict['rgb'].empty():queues_dict['rgb'].put(rgb)
         if queues_dict['frame_len'].empty():queues_dict['frame_len'].put(frame_sharpness)
-        if motor0.focus == True and motor0.direction == 'Z':  #开始对焦流程,直接找峰值，记录z和sharpness数组
-            z_pos_array.append(motor0.z_pos)
-            sharp_array.append(frame_sharpness)
-            if frame_sharpness >= max_sharpness:
-                max_sharpness = frame_sharpness
-                motor0.focus_pos = motor0.z_pos
-            # 峰值不能在边缘，第一次扫描结束
-            if max_sharpness > 1.2*np.mean(sharp_array) and (min(z_pos_array)+100 < motor0.focus_pos < max(z_pos_array)-100) and motor0.focus_get == False:
-                motor0.status, motor0.focus_get = False, True
-                print(motor0.focus_pos, max_sharpness)
-            # 第二次回扫，确定最终点,20 FPS有可能错过，主要是硬件光照灯不稳定，可能会有差别,如果判断不到则依赖局部最优
-            if abs(frame_sharpness/max_sharpness-1) < 0.02 and motor0.focus_get:
-                print('get best focus', frame_sharpness)
-                motor0.focus, motor0.status, motor0.focus_get = False, False, False
-                motor0.direction = ''  # Use empty string instead of None
-        else:  # 退出对焦流程，重置
-            max_sharpness, motor0.focus_get = 0, False
-            z_pos_array, sharp_array = [], []
-        
         # Send frame via SocketIO for real-time streaming (帧率减半)
         if frame_counter % 2 == 0:  # 只推送偶数帧，实现帧率减半
             try:
@@ -496,25 +479,25 @@ def handle_connect():
     # Load motor positions and send initial settings to client
     # motor_positions = load_motor_positions()
     settings = config.load_settings()
-    x_vol = motor0.measure_voltage('X')
-    y_vol = motor0.measure_voltage('Y')
-    z_vol = motor0.measure_voltage('Z')
+    x_vol = adc.measure_voltage('X')
+    y_vol = adc.measure_voltage('Y')
+    z_vol = adc.measure_voltage('Z')
     with open('/home/admin/Documents/microscopy/params.json', 'r', encoding='utf-8') as f:
         data_params = json.load(f)
         f.close()
     params_x = data_params['X']
     params_y = data_params['Y']
     params_z = data_params['Z'] 
-    motor0.x_pos = int(arctan_func(x_vol, params_x[0], params_x[1], params_x[2], params_x[3])*motor0.xy_steps_per_mm)
-    motor0.y_pos = int(arctan_func(y_vol, params_y[0], params_y[1], params_y[2], params_y[3])*motor0.xy_steps_per_mm)
-    motor0.z_pos = int(arctan_func(z_vol, params_z[0], params_z[1], params_z[2], params_z[3])*motor0.z_steps_per_mm)
-    print(x_vol, motor0.x_pos)
+    motor_x.pos = int(arctan_func(x_vol, params_x[0], params_x[1], params_x[2], params_x[3])*motor_x.steps_per_mm)
+    motor_y.pos = int(arctan_func(y_vol, params_y[0], params_y[1], params_y[2], params_y[3])*motor_y.steps_per_mm)
+    motor_z.pos = int(arctan_func(z_vol, params_z[0], params_z[1], params_z[2], params_z[3])*motor_z.steps_per_mm)
+    print(x_vol, motor_x.pos)
     # Combine settings with motor positions
     initial_data = {
         **settings,
-        'x_pos': round(motor0.x_pos / motor0.xy_steps_per_mm, 2),  # Convert steps to mm
-        'y_pos': round(motor0.y_pos / motor0.xy_steps_per_mm, 2),
-        'z_pos': round(motor0.z_pos / motor0.z_steps_per_mm, 2),
+        'x_pos': round(motor_x.pos / motor_x.steps_per_mm, 2),  # Convert steps to mm
+        'y_pos': round(motor_y.pos / motor_y.steps_per_mm, 2),
+        'z_pos': round(motor_z.pos / motor_z.steps_per_mm, 2),
         'show_xyz': config.show_xyz,  # 添加show_xyz变量到初始数据中
         'magnification': cam0.mag_scale,  # 添加显微镜倍率到初始数据中
         'z_level': config.z_level  # 添加景深堆叠Z Level参数到初始数据中
@@ -548,11 +531,14 @@ def handle_disconnect():
         config.video_writer_cam1.release()
     cam0.__stop__() # 停止摄像头
     cam1.__stop__() # 停止cam1摄像头
-    motor0.status = False
-    motor0.led_cycle0 = 0
-    motor0.set_led_power0()
-    motor0.led_cycle1 = 0
-    motor0.set_led_power1()
+
+    motor_x.status = False
+    motor_y.status = False
+    motor_z.status = False
+
+    led_0.set_led_power(0)
+    led_1.set_led_power(0)
+
     emit('closed', {'status': 'success', 'message': 'System closed'})
 
 
@@ -771,14 +757,14 @@ def handle_stitch_images():
         images = []
         
         # 保存当前位置
-        original_x = motor0.x_pos
-        original_y = motor0.y_pos
+        original_x = motor_x.pos
+        original_y = motor_y.pos
         mag_scale = 20/cam0.mag_scale
         # 计算移动步长（根据图像分辨率和视野计算）
         # 假设图像视野为0.4mm x 0.3mm，需要50%重叠区域
         # 每张图片移动0.2mm，确保有足够重叠
-        step_x_size = int(motor0.xy_steps_per_mm * 0.32*mag_scale)  # 0.32mm步长，确保30%重叠
-        step_y_size = int(motor0.xy_steps_per_mm * 0.24*mag_scale)  # 0.24mm步长，确保30%重叠
+        step_x_size = int(motor_x.steps_per_mm * 0.32*mag_scale)  # 0.32mm步长，确保30%重叠
+        step_y_size = int(motor_y.steps_per_mm * 0.24*mag_scale)  # 0.24mm步长，确保30%重叠
         # 拍摄3x3网格的图片，从左上角开始
         # 贪吃蛇形状运动：左上→右上→右中→右下→中下→中中→中上→左中→左上
         # 每张图片移动步长，确保有足够重叠区域进行拼接
@@ -798,15 +784,11 @@ def handle_stitch_images():
             send_log_message(f'拍摄第 {i+1}/9 张拼接图片', 'info')
             # 移动到指定位置
             if dx != 0:
-                motor0.direction = 'X'
-                motor0.status = True
-                motor0.move(dx)
+                motor_x.move(dx)
                 time.sleep(0.1)  # 等待移动完成，确保稳定
             
             if dy != 0:
-                motor0.direction = 'Y'
-                motor0.status = True
-                motor0.move(dy)
+                motor_y.move(dy)
                 time.sleep(0.1)  # 等待移动完成，确保稳定
             
             fast_focus(steps=50)
@@ -822,14 +804,10 @@ def handle_stitch_images():
             cam0.preview_config()
         
         # 恢复原始位置
-        motor0.direction = 'X'
-        motor0.status = True
-        motor0.move(original_x - motor0.x_pos)
+        motor_x.move(original_x - motor_x.pos)
         time.sleep(0.1)
         
-        motor0.direction = 'Y'
-        motor0.status = True
-        motor0.move(original_y - motor0.y_pos)
+        motor_y.move(original_y - motor_y.pos)
         time.sleep(0.1)
         
         # 拼接图像
@@ -878,7 +856,7 @@ def handle_focus_stack():
         images = []
         
         # 保存当前Z位置
-        original_z = motor0.z_pos
+        original_z = motor_z.pos
         # 计算Z轴移动步长（每张图片间隔0.02mm，总共覆盖0.08mm景深）
         step_z_size = int(config.z_level*2)  # 使用config.z_level参数
         z_positions = [-3*step_z_size, -2*step_z_size, -step_z_size, 0, step_z_size, 2*step_z_size, 3*step_z_size]  # 7个位置
@@ -886,12 +864,8 @@ def handle_focus_stack():
         for i, dz in enumerate(z_positions):
             send_log_message(f'拍摄第 {i+1}/{len(z_positions)} 张景深图片', 'info')
             # 移动到指定Z位置
-            if dz != 0:
-                motor0.direction = 'Z'
-                motor0.status = True
-                target_z = original_z + dz
-                motor0.move(target_z - motor0.z_pos)
-                time.sleep(0.2)  # 等待移动完成，确保稳定
+            motor_z.move_to_target(original_z + dz)
+            time.sleep(0.2)  # 等待移动完成，确保稳定
             
             # 拍摄图片
             rgb = cam0.capture_config()
@@ -908,9 +882,7 @@ def handle_focus_stack():
         cam0.preview_config()
         
         # 恢复原始Z位置
-        motor0.direction = 'Z'
-        motor0.status = True
-        motor0.move(original_z - motor0.z_pos)
+        motor_z.move_to_target(original_z)
         time.sleep(0.2)
         
         # 景深堆叠处理
@@ -1020,10 +992,10 @@ def handle_auto_brightness(data):
         
         # 保存原始LED设置
         if led_type == 0:
-            original_led = motor0.led_cycle0
+            original_led = led_0.led_cycle
             led_values = list(range(max(0, original_led - 10), min(20, original_led + 11)))
         else:
-            original_led = motor0.led_cycle1
+            original_led = led_1.led_cycle
             led_values = list(range(max(0, original_led - 10), min(50, original_led + 11)))
         
         # 测试不同LED亮度下的清晰度
@@ -1035,11 +1007,9 @@ def handle_auto_brightness(data):
         for i, led_value in enumerate(led_values):
             # 设置LED亮度
             if led_type == 0:
-                motor0.led_cycle0 = led_value
-                motor0.set_led_power0()
+                led_0.set_led_power(led_value)
             else:
-                motor0.led_cycle1 = led_value
-                motor0.set_led_power1()
+                led_1.set_led_power(led_value)
             time.sleep(0.1)  # 等待LED稳定
             
             # 清空队列中的旧数据
@@ -1080,11 +1050,9 @@ def handle_auto_brightness(data):
         
         # 设置为最优LED亮度
         if led_type == 0:
-            motor0.led_cycle0 = optimal_led
-            motor0.set_led_power0()
+            led_0.set_led_power(optimal_led)
         else:
-            motor0.led_cycle1 = optimal_led
-            motor0.set_led_power1()
+            led_1.set_led_power(optimal_led)
         
         print(f"{led_name}自动亮度调节完成 - 最佳LED: {optimal_led}, 最大清晰度: {max_sharpness}")
         send_log_message(f'{led_name}自动亮度调节完成 - 最佳LED: {optimal_led}, 最大清晰度: {max_sharpness}', 'success')
@@ -1103,11 +1071,9 @@ def handle_auto_brightness(data):
         
         # 恢复原始LED设置
         if led_type == 0:
-            motor0.led_cycle0 = original_led
-            motor0.set_led_power0()
+            led_0.set_led_power(original_led)
         else:
-            motor0.led_cycle1 = original_led
-            motor0.set_led_power1()
+            led_1.set_led_power(original_led)
         
         emit('auto_brightness_response', {
             'success': False,
@@ -1120,9 +1086,9 @@ def handle_auto_brightness(data):
 def handle_stop_move():
     """停止电机运动"""
     try:
-        motor0.status = False
-        motor0.direction = ''
-        motor0.focus = False
+        motor_x.status = False
+        motor_y.status = False
+        motor_z.status = False
         emit('move_status', {'status': False, 'message': 'Moving stopped'})
     except Exception as e:
         print(f"Stop move error: {e}")
@@ -1155,13 +1121,11 @@ def handle_set_gain(data):
 def handle_set_x_pos(data):
     try:
         xpos = float(data['value'])  #每移动1mm，相当于电机转steps_per_mm步
-        motor0.direction = 'X'
-        target_xpose = int(motor0.xy_steps_per_mm*xpos)
-        if motor0.status:
-            motor0.status = False
+        target_xpose = int(motor_x.steps_per_mm*xpos)
+        if motor_x.status:
+            motor_x.status = False
             time.sleep(0.01)
-        motor0.status = True
-        motor0.move_to_target(target_xpose)
+        motor_x.move_to_target(target_xpose)
         emit('x_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
         emit('x_pos_set', {'status': 'error', 'message': str(e)})
@@ -1171,13 +1135,11 @@ def handle_set_x_pos(data):
 def handle_set_y_pos(data):
     try:
         ypos = float(data['value'])  #每移动1mm，相当于电机转steps_per_mm步
-        motor0.direction = 'Y'
-        target_ypose = int(motor0.xy_steps_per_mm*ypos)
-        if motor0.status:
-            motor0.status = False
+        target_ypose = int(motor_y.steps_per_mm*ypos)
+        if motor_y.status:
+            motor_y.status = False
             time.sleep(0.01)
-        motor0.status = True
-        motor0.move_to_target(target_ypose)
+        motor_y.move_to_target(target_ypose)
         emit('y_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
         emit('y_pos_set', {'status': 'error', 'message': str(e)})
@@ -1187,13 +1149,11 @@ def handle_set_y_pos(data):
 def handle_set_z_pos(data):
     try:
         zpos = float(data['value'])  #每移动1mm，相当于电机转steps_per_mm步
-        motor0.direction, motor0.focus = 'Z', False
-        target_zpose = int(motor0.z_steps_per_mm*zpos)
-        if motor0.status:
-            motor0.status = False
+        target_zpose = int(motor_z.steps_per_mm*zpos)
+        if motor_z.status:
+            motor_z.status = False
             time.sleep(0.01)
-        motor0.status = True
-        motor0.move_to_target(target_zpose)
+        motor_z.move_to_target(target_zpose)
         emit('z_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
         emit('z_pos_set', {'status': 'error', 'message': str(e)})
@@ -1204,13 +1164,10 @@ def handle_move_z(data):
     """处理Z轴步进移动请求"""
     try:
         steps = int(data.get('steps', 1))  # 默认移动1步，可以是-1或1
-        motor0.direction = 'Z'
-        motor0.focus = False
-        if motor0.status:
-            motor0.status = False
+        if motor_z.status:
+            motor_z.status = False
             time.sleep(0.01)
-        motor0.status = True
-        motor0.move(steps)
+        motor_z.move(steps)
         emit('z_move_response', {'status': 'success', 'steps': steps})
     except Exception as e:
         emit('z_move_response', {'status': 'error', 'message': str(e)})
@@ -1227,21 +1184,18 @@ def handle_move_x(data):
         # 将微米转换为步数：(步长_um / 1000) * xy_steps_per_mm
         # 保持正负号以确定方向
         step_size_mm = abs(step_size_um) / 1000.0
-        steps = int(step_size_mm * motor0.xy_steps_per_mm)
+        steps = int(step_size_mm * motor_x.steps_per_mm)
         if steps == 0:
             steps = 1  # 确保至少移动1步
         
         # 根据step_size_um的正负确定方向
         if step_size_um < 0:
             steps = -steps
-        
-        motor0.direction = 'X'
-        motor0.focus = False
-        if motor0.status:
-            motor0.status = False
-            time.sleep(0.01)
-        motor0.status = True
-        motor0.move(steps)
+
+        if motor_x.status:
+            motor_x.status = False
+            time.sleep(0.05)
+        motor_x.move(steps)
         emit('x_move_response', {'status': 'success', 'steps': steps})
     except Exception as e:
         emit('x_move_response', {'status': 'error', 'message': str(e)})
@@ -1258,7 +1212,7 @@ def handle_move_y(data):
         # 将微米转换为步数：(步长_um / 1000) * xy_steps_per_mm
         # 保持正负号以确定方向
         step_size_mm = abs(step_size_um) / 1000.0
-        steps = int(step_size_mm * motor0.xy_steps_per_mm)
+        steps = int(step_size_mm * motor_y.steps_per_mm)
         if steps == 0:
             steps = 1  # 确保至少移动1步
         
@@ -1266,24 +1220,14 @@ def handle_move_y(data):
         if step_size_um < 0:
             steps = -steps
         
-        motor0.direction = 'Y'
-        motor0.focus = False
-        if motor0.status:
-            motor0.status = False
+        if motor_y.status:
+            motor_y.status = False
             time.sleep(0.01)
-        motor0.status = True
-        motor0.move(steps)
+        motor_y.move(steps)
         emit('y_move_response', {'status': 'success', 'steps': steps})
     except Exception as e:
         emit('y_move_response', {'status': 'error', 'message': str(e)})
 
-
-def focus_init():
-    motor0.direction = 'Z'
-    motor0.focus = False  # 开始对焦
-    # 先扫描400步，看方向
-    motor0.status = False
-    time.sleep(0.01)
 
 def determine_initial_direction(steps=200):
     """
@@ -1292,16 +1236,14 @@ def determine_initial_direction(steps=200):
     """
     _ = queues_dict['frame_len'].get()
     test_sharpness1  = queues_dict['frame_len'].get()
-    motor0.status = True
-    motor0.move(steps)
+    motor_z.move(steps)
     _ = queues_dict['frame_len'].get()
     test_sharpness2  = queues_dict['frame_len'].get()
     # print(f"test_sharpness1: {test_sharpness1}, test_sharpness2: {test_sharpness2}")
     if test_sharpness1 >= test_sharpness2:
         return -steps
     else:
-        motor0.status = True
-        motor0.move(-steps)
+        motor_z.move(-steps)
         return steps
 
 
@@ -1312,52 +1254,38 @@ def handle_fast_focus():
 
 def fast_focus(steps=200):
     send_log_message('开始快速对焦...', 'info')
-    focus_init()
     # 参数配置
     STEP_COARSE = determine_initial_direction(steps=steps)   # 粗测步长
     STEP_FINE = int(10*np.sign(STEP_COARSE))      # 精测步长
-    BACKLASH_MARGIN = int(40*np.sign(STEP_COARSE)) # 大于最大回程差的安全距离
 
     max_focus_val = 0
     peak_position_coarse = 0
 
     # --- 阶段 1: 粗测 (Coarse Search) ---
     while True:
-        motor0.status = True
-        motor0.move(STEP_COARSE) # 移动
+        motor_z.move(STEP_COARSE, backlash=False) # 移动
         _ = queues_dict['frame_len'].get()
         val  = queues_dict['frame_len'].get()
-        # print(f"val: {val}, motor0.z_pos: {motor0.z_pos}")
         if val > max_focus_val:
             max_focus_val = val
-            peak_position_coarse = motor0.z_pos
+            peak_position_coarse = motor_z.pos
             consecutive_drop = 0
         elif val < max_focus_val * 0.9:
             consecutive_drop += 1
         if consecutive_drop >=2 and val < max_focus_val * 0.9: # 下降到峰值的90%（阈值防抖）
             # 确认已过峰值
             break
-            
     # --- 阶段 2: 回退与消隙 (Backlash Elimination) ---
     # 我们需要回到粗测峰值的前面一点，开始精测
-    scan_start_pos = peak_position_coarse - (STEP_COARSE * 2)
-    
-    # 关键：先退到比目标更远的地方
-    target_reverse_pos = scan_start_pos - BACKLASH_MARGIN
-    motor0.status = True
-    motor0.move_to_target(target_reverse_pos) 
-    
-    # 再正向走到精测起点（此时齿轮已咬合）
-    motor0.status = True
-    motor0.move_to_target(scan_start_pos)
+    scan_start_pos = peak_position_coarse - STEP_COARSE
+    motor_z.move_to_target(scan_start_pos) 
     
     # --- 阶段 3: 精测 (Fine Search) ---
     fine_scores = {}
-    scan_end = peak_position_coarse + STEP_COARSE * 2
+    scan_end = peak_position_coarse + STEP_COARSE
     max_focus_val = 0
-    while (motor0.z_pos - scan_end)*STEP_FINE < 0:
-        motor0.status = True
-        motor0.move(STEP_FINE)
+    while (motor_z.pos - scan_end)*STEP_FINE < 0:
+        motor_z.move(STEP_FINE, backlash=False)
         _ = queues_dict['frame_len'].get()
         val = queues_dict['frame_len'].get()
         if val > max_focus_val:
@@ -1365,30 +1293,38 @@ def fast_focus(steps=200):
             consecutive_drop = 0
         else:
             consecutive_drop += 1
-        fine_scores[motor0.z_pos] = val
+        fine_scores[motor_z.pos] = val
         if consecutive_drop >=2 and val < max_focus_val * 0.9: # 下降到峰值的90%（阈值防抖）
             # 确认已过峰值
             break
-
     best_pos = max(fine_scores, key=fine_scores.get)
-    # print(f"best_pos: {best_pos}, motor0.z_pos: {motor0.z_pos},{BACKLASH_MARGIN}")
-    # 同样，不能直接退回去，必须使用“过量回退法”
-    distance_to_best = best_pos - motor0.z_pos-BACKLASH_MARGIN
-    # 1. 过量后退
-    motor0.status = True
-    motor0.move(distance_to_best)
-    time.sleep(0.01)
-    motor0.status = True
-    motor0.move(BACKLASH_MARGIN)
-    motor0.focus, motor0.focus_get = False, False  # 对焦结束
+    end_pos = best_pos - np.sign(STEP_FINE)*motor_z.backlash_margin*2 #补充回程差
+    if STEP_FINE < 0:
+        fine_scores = {}
+        max_focus_val = 0
+        #代表存在回程差，需要正向再扫描一次
+        while (motor_z.pos - end_pos)*STEP_FINE > 0:
+            motor_z.move(-STEP_FINE, backlash=False)
+            _ = queues_dict['frame_len'].get()
+            val = queues_dict['frame_len'].get()
+            if val > max_focus_val:
+                max_focus_val = val
+                consecutive_drop = 0
+            else:
+                consecutive_drop += 1
+            fine_scores[motor_z.pos] = val
+            if consecutive_drop >=2 and val < max_focus_val * 0.9: # 下降到峰值的90%（阈值防抖）
+                # 确认已过峰值
+                break
+        best_pos = max(fine_scores, key=fine_scores.get)
+    motor_z.move_to_target(best_pos)
     send_log_message('对焦完成', 'success')
 
 
 @socketio.on('set_led_0')
 def handle_set_led_0(data):
     try:
-        motor0.led_cycle0 = int(data['value'])
-        motor0.set_led_power0()
+        led_0.set_led_power(int(data['value']))
         emit('led_0_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
         print(f"LED 0 setting error: {e}")
@@ -1398,8 +1334,7 @@ def handle_set_led_0(data):
 @socketio.on('set_led_1')
 def handle_set_led_1(data):
     try:
-        motor0.led_cycle1 = int(data['value'])
-        motor0.set_led_power1()
+        led_1.set_led_power(int(data['value']))
         emit('led_1_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
         print(f"LED 1 setting error: {e}")
@@ -1554,7 +1489,11 @@ def handle_close():
         config.video_writer_cam1.release()
     cam0.__stop__() # 停止摄像头
     cam1.__stop__() # 停止cam1摄像头
-    motor0.status = False
+    motor_x.status = False
+    motor_y.status = False
+    motor_z.status = False
+    led_0.set_led_power(0)
+    led_1.set_led_power(0)
     emit('closed', {'status': 'success', 'message': 'System closed'})
 
 
@@ -2643,13 +2582,13 @@ def send_motor_positions():
     while True:
         try:
             # Convert steps to mm (steps_per_mm steps = 1mm)
-            x_pos_mm = motor0.x_pos / motor0.xy_steps_per_mm
-            y_pos_mm = motor0.y_pos / motor0.xy_steps_per_mm
-            z_pos_mm = motor0.z_pos / motor0.z_steps_per_mm
+            x_pos_mm = motor_x.pos / motor_x.steps_per_mm
+            y_pos_mm = motor_y.pos / motor_y.steps_per_mm
+            z_pos_mm = motor_z.pos / motor_z.steps_per_mm
             
-            x_vol = round(motor0.measure_voltage('X'),4)
-            y_vol = round(motor0.measure_voltage('Y'),4)
-            z_vol = round(motor0.measure_voltage('Z'),4)
+            x_vol = round(adc.measure_voltage('X'),4)
+            y_vol = round(adc.measure_voltage('Y'),4)
+            z_vol = round(adc.measure_voltage('Z'),4)
 
             x_pos_vol_mm = round(arctan_func(x_vol, params_x[0], params_x[1], params_x[2], params_x[3]), 4)
             y_pos_vol_mm = round(arctan_func(y_vol, params_y[0], params_y[1], params_y[2], params_y[3]), 4)
@@ -2660,22 +2599,22 @@ def send_motor_positions():
                 'x_pos': round(x_pos_mm, 3),
                 'y_pos': round(y_pos_mm, 3),
                 'z_pos': round(z_pos_mm, 3),
-                'motor_status': motor0.status,  # Add motor status for indicator
+                'motor_status': motor_x.status or motor_y.status or motor_z.status,  # Add motor status for indicator
                 'x_vol': x_pos_vol_mm,
                 'y_vol': y_pos_vol_mm,
                 'z_vol': z_pos_vol_mm
             })
              # 二者定位差距大时，以电压校准为准，因为螺纹会有回程差，只针对运动时的方向，其他方向不控制
-            if abs(x_pos_mm - x_pos_vol_mm) > 0.05 and motor0.direction == 'X':
-                motor0.x_pos = int(x_pos_vol_mm*motor0.xy_steps_per_mm)
-            if abs(y_pos_mm - y_pos_vol_mm) > 0.05 and motor0.direction == 'Y':
-                motor0.y_pos = int(y_pos_vol_mm*motor0.xy_steps_per_mm)
-            if abs(z_pos_mm - z_pos_vol_mm) > 0.02 and motor0.direction == 'Z':
-                motor0.z_pos = int(z_pos_vol_mm*motor0.z_steps_per_mm)
+            if abs(x_pos_mm - x_pos_vol_mm) > 0.1:
+                motor_x.pos = int(x_pos_vol_mm*motor_x.steps_per_mm)
+            if abs(y_pos_mm - y_pos_vol_mm) > 0.1:
+                motor_y.pos = int(y_pos_vol_mm*motor_y.steps_per_mm)
+            if abs(z_pos_mm - z_pos_vol_mm) > 0.5:
+                motor_z.pos = int(z_pos_vol_mm*motor_z.steps_per_mm)
 
         except Exception as e:
             print(f"Error sending motor positions: {e}")
-        if motor0.status: #动态时，实时保存
+        if motor_x.status or motor_y.status or motor_z.status: #动态时，实时保存
             time.sleep(0.1)  # 200ms frequency
         else: #静态时，缓慢保存
             time.sleep(1)  # 200ms frequency

@@ -2464,6 +2464,84 @@ def handle_save_vllm_api_key(data):
         })
 
 
+def check_update_background():
+    """后台检查系统版本更新（不发送socketio消息，只记录日志）"""
+    try:
+        import subprocess
+        import tempfile
+        
+        github_url = 'https://github.com/ctouchair/microscopy.git'
+        
+        # 获取远程仓库的最新提交信息
+        with tempfile.TemporaryDirectory() as temp_dir:
+            # 浅克隆仓库获取最新提交信息
+            clone_result = subprocess.run([
+                'git', 'clone', '--depth', '1', github_url, temp_dir + '/repo'
+            ], capture_output=True, text=True, timeout=60)
+            
+            if clone_result.returncode != 0:
+                print(f"后台版本检查失败: 无法访问远程仓库")
+                return
+            
+            # 获取最新提交的信息
+            commit_result = subprocess.run([
+                'git', '-C', temp_dir + '/repo', 'log', '-1', '--format=%H|%s|%ad', '--date=short'
+            ], capture_output=True, text=True)
+            
+            if commit_result.returncode == 0:
+                commit_info = commit_result.stdout.strip().split('|')
+                latest_commit = {
+                    'hash': commit_info[0][:8],
+                    'message': commit_info[1],
+                    'date': commit_info[2]
+                }
+                
+                # 获取当前本地版本信息（优先从保存的版本文件读取）
+                local_version = "未知版本"
+                
+                try:
+                    # 首先尝试从本地版本文件读取
+                    version_file = '/home/admin/Documents/microscopy/version.json'
+                    if os.path.exists(version_file):
+                        with open(version_file, 'r', encoding='utf-8') as f:
+                            local_version_info = json.load(f)
+                            local_version = local_version_info.get('hash', '未知版本')
+                    else:
+                        # 如果本地文件不存在，尝试从git获取
+                        if os.path.exists('/home/admin/Documents/microscopy/.git'):
+                            local_result = subprocess.run([
+                                'git', '-C', '/home/admin/Documents/microscopy', 'log', '-1', '--format=%H'
+                            ], capture_output=True, text=True)
+                            if local_result.returncode == 0:
+                                local_version = local_result.stdout.strip()[:8]
+                except Exception as e:
+                    print(f"读取本地版本信息失败: {e}")
+                
+                has_update = latest_commit['hash'] != local_version
+                
+                # 如果检测到新版本，发送日志提醒
+                if has_update:
+                    update_message = (
+                        f'🔔 检测到新版本软件更新！'
+                        f'当前版本: {local_version}, '
+                        f'最新版本: {latest_commit["hash"]} '
+                        f'({latest_commit["date"]})。'
+                        f'更新内容: {latest_commit["message"]}。'
+                        f'请在系统设置中点击"检查更新"进行更新。'
+                    )
+                    send_log_message(update_message, 'info')
+                    print(f"版本检查: {update_message}")
+                else:
+                    print(f"版本检查: 当前已是最新版本 ({local_version})")
+            else:
+                print("后台版本检查失败: 无法获取版本信息")
+    
+    except subprocess.TimeoutExpired:
+        print("后台版本检查超时")
+    except Exception as e:
+        print(f"后台版本检查出错: {e}")
+
+
 @socketio.on('check_update')
 def handle_check_update():
     """检查是否有可用的更新"""
@@ -2798,6 +2876,11 @@ if __name__ == "__main__":
     # Start motor position update thread
     motor_position_thread = threading.Thread(target=send_motor_positions, daemon=True)
     motor_position_thread.start()
+    
+    # Start background version check thread
+    print("启动后台版本检查...")
+    version_check_thread = threading.Thread(target=check_update_background, daemon=True)
+    version_check_thread.start()
     
     print("Server starting on http://0.0.0.0:5000")
     socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)

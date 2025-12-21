@@ -92,10 +92,10 @@ class Motor():
         
         self.direction = direction
         self.status = False
+        self.backlash = False
         self.pos = 0  #记录运动步数
         self.step_per_mm = 1450/1.5
         self.backlash_margin = 35  # 回程差安全距离
-        self.focus = False
         # 从settings.json读取步数参数
         self.load_steps_per_mm()
         
@@ -170,20 +170,25 @@ class Motor():
 
     def move(self, step=0, backlash=True):
         IN1, IN2, IN3, IN4 = direction(pos=self.direction)
-        self.status = True
         if step >= 0 or not backlash:
             self.forward(IN1, IN2, IN3, IN4, 0.002, int(step))
         else: # 反向移动时，先过量再回程，保证咬合
             self.forward(IN1, IN2, IN3, IN4, 0.002, int(step-self.backlash_margin))
-            self.status = True
-            self.forward(IN1, IN2, IN3, IN4, 0.002, int(self.backlash_margin))
+            self.backlash_move()
 
-    def move_to_target(self, target_pose=0, backlash=True):
+
+    def move_to_target(self, target_pose=0):
         steps = target_pose - self.pos
-        self.move(steps, backlash)
+        self.move(steps)
 
+    def backlash_move(self):
+        self.backlash = True
+        IN1, IN2, IN3, IN4 = direction(pos=self.direction)
+        self.forward(IN1, IN2, IN3, IN4, 0.002, int(self.backlash_margin))
+        self.backlash = False
 
     def forward(self, IN1, IN2, IN3, IN4, delay, steps):  #启动频率550Hz，因此最小delay 2ms
+        self.status = True
         if IN1 is not None:
             for i in range(0, abs(steps)):
                 if not self.status:

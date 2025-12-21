@@ -865,7 +865,7 @@ def handle_focus_stack():
             send_log_message(f'拍摄第 {i+1}/{len(z_positions)} 张景深图片', 'info')
             # 移动到指定Z位置
             motor_z.move_to_target(original_z + dz)
-            time.sleep(0.2)  # 等待移动完成，确保稳定
+            time.sleep(0.1)  # 等待移动完成，确保稳定
             
             # 拍摄图片
             rgb = cam0.capture_config()
@@ -1125,6 +1125,8 @@ def handle_set_x_pos(data):
         if motor_x.status:
             motor_x.status = False
             time.sleep(0.01)
+        while motor_x.backlash:
+            time.sleep(0.02)
         motor_x.move_to_target(target_xpose)
         emit('x_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
@@ -1139,6 +1141,8 @@ def handle_set_y_pos(data):
         if motor_y.status:
             motor_y.status = False
             time.sleep(0.01)
+        while motor_y.backlash:
+            time.sleep(0.02)
         motor_y.move_to_target(target_ypose)
         emit('y_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
@@ -1153,6 +1157,8 @@ def handle_set_z_pos(data):
         if motor_z.status:
             motor_z.status = False
             time.sleep(0.01)
+        while motor_z.backlash:
+            time.sleep(0.02)
         motor_z.move_to_target(target_zpose)
         emit('z_pos_set', {'status': 'success', 'value': data['value']})
     except Exception as e:
@@ -1167,6 +1173,8 @@ def handle_move_z(data):
         if motor_z.status:
             motor_z.status = False
             time.sleep(0.01)
+        while motor_z.backlash:
+            time.sleep(0.02)
         motor_z.move(steps)
         emit('z_move_response', {'status': 'success', 'steps': steps})
     except Exception as e:
@@ -1194,7 +1202,9 @@ def handle_move_x(data):
 
         if motor_x.status:
             motor_x.status = False
-            time.sleep(0.05)
+            time.sleep(0.01)
+        while motor_x.backlash:
+            time.sleep(0.02)
         motor_x.move(steps)
         emit('x_move_response', {'status': 'success', 'steps': steps})
     except Exception as e:
@@ -1223,6 +1233,8 @@ def handle_move_y(data):
         if motor_y.status:
             motor_y.status = False
             time.sleep(0.01)
+        while motor_y.backlash:
+            time.sleep(0.02)
         motor_y.move(steps)
         emit('y_move_response', {'status': 'success', 'steps': steps})
     except Exception as e:

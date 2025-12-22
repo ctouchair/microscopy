@@ -98,7 +98,7 @@ class Motor():
         self.backlash_margin = 35  # 回程差安全距离
         # 从settings.json读取步数参数
         self.load_steps_per_mm()
-        
+        self.focus = False
         # 默认step_sign值
         self.step_sign = -1
         

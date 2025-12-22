@@ -1089,6 +1089,7 @@ def handle_stop_move():
         motor_x.status = False
         motor_y.status = False
         motor_z.status = False
+        motor_z.focus = False
         emit('move_status', {'status': False, 'message': 'Moving stopped'})
     except Exception as e:
         print(f"Stop move error: {e}")
@@ -1266,6 +1267,7 @@ def handle_fast_focus():
 
 def fast_focus(steps=200):
     send_log_message('开始快速对焦...', 'info')
+    motor_z.focus = True
     # 参数配置
     STEP_COARSE = determine_initial_direction(steps=steps)   # 粗测步长
     STEP_FINE = int(10*np.sign(STEP_COARSE))      # 精测步长
@@ -1274,7 +1276,7 @@ def fast_focus(steps=200):
     peak_position_coarse = 0
 
     # --- 阶段 1: 粗测 (Coarse Search) ---
-    while True:
+    while motor_z.focus:
         motor_z.move(STEP_COARSE, backlash=False) # 移动
         _ = queues_dict['frame_len'].get()
         val  = queues_dict['frame_len'].get()
@@ -1290,13 +1292,14 @@ def fast_focus(steps=200):
     # --- 阶段 2: 回退与消隙 (Backlash Elimination) ---
     # 我们需要回到粗测峰值的前面一点，开始精测
     scan_start_pos = peak_position_coarse - STEP_COARSE
-    motor_z.move_to_target(scan_start_pos) 
+    if motor_z.focus == True:
+        motor_z.move_to_target(scan_start_pos) 
     
     # --- 阶段 3: 精测 (Fine Search) ---
     fine_scores = {}
     scan_end = peak_position_coarse + STEP_COARSE
     max_focus_val = 0
-    while (motor_z.pos - scan_end)*STEP_FINE < 0:
+    while (motor_z.pos - scan_end)*STEP_FINE < 0 and motor_z.focus == True:
         motor_z.move(STEP_FINE, backlash=False)
         _ = queues_dict['frame_len'].get()
         val = queues_dict['frame_len'].get()
@@ -1309,13 +1312,13 @@ def fast_focus(steps=200):
         if consecutive_drop >=2 and val < max_focus_val * 0.9: # 下降到峰值的90%（阈值防抖）
             # 确认已过峰值
             break
-    best_pos = max(fine_scores, key=fine_scores.get)
+    best_pos = max(fine_scores, key=fine_scores.get, default=0)
     end_pos = best_pos - np.sign(STEP_FINE)*motor_z.backlash_margin*2 #补充回程差
-    if STEP_FINE < 0:
+    if STEP_FINE < 0 and motor_z.focus == True:
         fine_scores = {}
         max_focus_val = 0
         #代表存在回程差，需要正向再扫描一次
-        while (motor_z.pos - end_pos)*STEP_FINE > 0:
+        while (motor_z.pos - end_pos)*STEP_FINE > 0 and motor_z.focus == True:
             motor_z.move(-STEP_FINE, backlash=False)
             _ = queues_dict['frame_len'].get()
             val = queues_dict['frame_len'].get()
@@ -1328,8 +1331,10 @@ def fast_focus(steps=200):
             if consecutive_drop >=2 and val < max_focus_val * 0.9: # 下降到峰值的90%（阈值防抖）
                 # 确认已过峰值
                 break
-        best_pos = max(fine_scores, key=fine_scores.get)
-    motor_z.move_to_target(best_pos)
+        best_pos = max(fine_scores, key=fine_scores.get, default=0)
+    if motor_z.focus == True:
+        motor_z.move_to_target(best_pos)
+    motor_z.focus = False
     send_log_message('对焦完成', 'success')
 
 

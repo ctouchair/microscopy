@@ -116,6 +116,10 @@ class Motor():
         
         settings_file = '/home/admin/Documents/microscopy/settings.json'
         
+        # 设置默认值
+        default_xy_steps_per_mm = 828.57
+        default_z_steps_per_mm = 1450
+        
         try:
             if os.path.exists(settings_file):
                 with open(settings_file, 'r', encoding='utf-8') as f:
@@ -126,20 +130,41 @@ class Motor():
                     xy_steps_per_mm = settings['xy_steps_per_mm']
                 else:
                     print("No xy_steps_per_mm found in settings.json, using default value")
+                    xy_steps_per_mm = default_xy_steps_per_mm
                 
                 # 读取z_steps_per_mm参数
                 if 'z_steps_per_mm' in settings:
                     z_steps_per_mm = settings['z_steps_per_mm']
+                else:
+                    print("No z_steps_per_mm found in settings.json, using default value")
+                    z_steps_per_mm = default_z_steps_per_mm
                 
-                if self.direction == 'X' or "Y":
+                # 根据方向设置steps_per_mm
+                if self.direction == 'X' or self.direction == 'Y':
                     self.steps_per_mm = xy_steps_per_mm
                 elif self.direction == 'Z':
                     self.steps_per_mm = z_steps_per_mm
                 else:
-                    print("direction error !!")
+                    print(f"direction error: {self.direction}!")
+                    self.steps_per_mm = default_xy_steps_per_mm
+            else:
+                # 如果文件不存在，使用默认值
+                if self.direction == 'X' or self.direction == 'Y':
+                    self.steps_per_mm = default_xy_steps_per_mm
+                elif self.direction == 'Z':
+                    self.steps_per_mm = default_z_steps_per_mm
+                else:
+                    self.steps_per_mm = default_xy_steps_per_mm
         except Exception as e:
             print(f"Error loading steps_per_mm from settings.json: {e}")
             print("Using default steps_per_mm values")
+            # 异常时使用默认值
+            if self.direction == 'X' or self.direction == 'Y':
+                self.steps_per_mm = default_xy_steps_per_mm
+            elif self.direction == 'Z':
+                self.steps_per_mm = default_z_steps_per_mm
+            else:
+                self.steps_per_mm = default_xy_steps_per_mm
 
     def load_step_signs(self):
         """从params.json文件中读取step_sign参数"""
